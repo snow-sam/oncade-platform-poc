@@ -9,7 +9,7 @@ import type { CreateInvoiceInput, Invoice, InvoiceStatus, WebhookEvent } from '.
 export interface InvoiceApi {
   createInvoice(input: CreateInvoiceInput, idempotencyKey?: string): Promise<Invoice>;
   getInvoice(invoiceId: string): Promise<Invoice>;
-  sendInvoice(invoiceId: string, opts: { sendEmail?: boolean }): Promise<Invoice>;
+  sendInvoice(invoiceId: string, options: { sendEmail?: boolean }): Promise<Invoice>;
   cancelInvoice(invoiceId: string): Promise<Invoice>;
 }
 
@@ -30,18 +30,33 @@ export interface Confirmation {
 export class InvoiceLifecycleError extends Error {
   readonly expected?: InvoiceStatus;
   readonly actual?: InvoiceStatus;
-  constructor(message: string, opts: { expected?: InvoiceStatus; actual?: InvoiceStatus; cause?: unknown } = {}) {
-    super(message, { cause: opts.cause });
+  constructor(message: string, details: { expected?: InvoiceStatus; actual?: InvoiceStatus; cause?: unknown } = {}) {
+    super(message, { cause: details.cause });
     this.name = 'InvoiceLifecycleError';
-    this.expected = opts.expected;
-    this.actual = opts.actual;
+    this.expected = details.expected;
+    this.actual = details.actual;
   }
 }
 
-interface CallOptions {
+interface ConfirmOptions {
   /** Overrides the default webhook wait for this call. */
   webhookTimeoutMs?: number;
 }
+
+/** What confirming one transition means: the operation's name, the state the API must report, the webhook to expect. */
+interface Transition {
+  operation: string;
+  expectedStatus: InvoiceStatus;
+  webhookEvent: string;
+}
+
+const TRANSITIONS = {
+  issue: { operation: 'issue', expectedStatus: 'draft', webhookEvent: 'Platform.Invoice.Created' },
+  send: { operation: 'send', expectedStatus: 'sent', webhookEvent: 'Platform.Invoice.Sent' },
+  cancel: { operation: 'cancel', expectedStatus: 'cancelled', webhookEvent: 'Platform.Invoice.Cancelled' },
+} satisfies Record<string, Transition>;
+
+const DEFAULT_WEBHOOK_TIMEOUT_MS = 60_000;
 
 /**
  * Invoice lifecycle (see GLOSSARY.md): drives draft → sent → cancelled and confirms each transition.
@@ -56,50 +71,50 @@ export class InvoiceLifecycle {
   private readonly events?: EventSource;
   private readonly webhookTimeoutMs: number;
 
-  constructor(private readonly api: InvoiceApi, opts: { events?: EventSource; webhookTimeoutMs?: number } = {}) {
-    this.events = opts.events;
-    this.webhookTimeoutMs = opts.webhookTimeoutMs ?? 60_000;
+  constructor(private readonly api: InvoiceApi, options: { events?: EventSource; webhookTimeoutMs?: number } = {}) {
+    this.events = options.events;
+    this.webhookTimeoutMs = options.webhookTimeoutMs ?? DEFAULT_WEBHOOK_TIMEOUT_MS;
   }
 
-  issue(draft: InvoiceDraft, opts: CallOptions = {}): Promise<Confirmation> {
-    // Strip any status the caller smuggled in: issuing always produces a draft.
-    const { status: _ignored, ...rest } = draft as CreateInvoiceInput;
-    return this.transition('issue', 'draft', 'Platform.Invoice.Created', opts,
-      () => this.api.createInvoice({ ...rest, status: 'draft' }, randomUUID()));
+  issue(draft: InvoiceDraft, options: ConfirmOptions = {}): Promise<Confirmation> {
+    // Drop any status the caller passed anyway: issuing always produces a draft.
+    const { status: _ignored, ...fields } = draft as CreateInvoiceInput;
+    return this.confirm(TRANSITIONS.issue, options,
+      () => this.api.createInvoice({ ...fields, status: 'draft' }, randomUUID()));
   }
 
-  send(invoiceId: string, opts: CallOptions & { sendEmail?: boolean } = {}): Promise<Confirmation> {
-    return this.transition('send', 'sent', 'Platform.Invoice.Sent', opts,
-      () => this.api.sendInvoice(invoiceId, { sendEmail: opts.sendEmail ?? false }));
+  send(invoiceId: string, options: ConfirmOptions & { sendEmail?: boolean } = {}): Promise<Confirmation> {
+    return this.confirm(TRANSITIONS.send, options,
+      () => this.api.sendInvoice(invoiceId, { sendEmail: options.sendEmail ?? false }));
   }
 
-  cancel(invoiceId: string, opts: CallOptions = {}): Promise<Confirmation> {
-    return this.transition('cancel', 'cancelled', 'Platform.Invoice.Cancelled', opts,
-      () => this.api.cancelInvoice(invoiceId));
+  cancel(invoiceId: string, options: ConfirmOptions = {}): Promise<Confirmation> {
+    return this.confirm(TRANSITIONS.cancel, options, () => this.api.cancelInvoice(invoiceId));
   }
 
-  private async transition(
-    name: string, expected: InvoiceStatus, eventName: string, opts: CallOptions, act: () => Promise<Invoice>,
-  ): Promise<Confirmation> {
+  /** Performs the action, reads the invoice back, checks its state, then waits for the matching webhook. */
+  private async confirm(transition: Transition, options: ConfirmOptions, performAction: () => Promise<Invoice>): Promise<Confirmation> {
+    const { operation, expectedStatus, webhookEvent } = transition;
     // Captured before the HTTP call: a delivery can land before the response does.
     const since = new Date();
 
     let invoice: Invoice;
     try {
-      const acted = await act();
-      invoice = await this.api.getInvoice(acted._id);
+      const actedOn = await performAction();
+      invoice = await this.api.getInvoice(actedOn._id);
     } catch (err) {
-      throw new InvoiceLifecycleError(`${name} failed: ${(err as Error).message}`, { expected, cause: err });
+      throw new InvoiceLifecycleError(`${operation} failed: ${(err as Error).message}`, { expected: expectedStatus, cause: err });
     }
-    if (invoice.status !== expected) {
-      throw new InvoiceLifecycleError(`${name}: expected invoice ${invoice._id} to be "${expected}", API says "${invoice.status}"`,
-        { expected, actual: invoice.status });
+    if (invoice.status !== expectedStatus) {
+      throw new InvoiceLifecycleError(
+        `${operation}: expected invoice ${invoice._id} to be "${expectedStatus}", API says "${invoice.status}"`,
+        { expected: expectedStatus, actual: invoice.status });
     }
 
     if (!this.events) return { invoice, webhook: { status: 'skipped' } };
     const event = await this.events.waitFor(
-      e => e.event === eventName && e.data?.invoiceId === invoice._id,
-      { since, timeoutMs: opts.webhookTimeoutMs ?? this.webhookTimeoutMs },
+      e => e.event === webhookEvent && e.data?.invoiceId === invoice._id,
+      { since, timeoutMs: options.webhookTimeoutMs ?? this.webhookTimeoutMs },
     );
     return { invoice, webhook: event ? { status: 'received', event } : { status: 'timeout' } };
   }
