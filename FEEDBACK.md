@@ -31,6 +31,11 @@ Each item: where, what I did, what I expected, what happened. Tags: **broken**, 
 - **What happened:**
   - It only says "Delivery is retried", with no retry count, backoff, timeout or expected status code. The 2xx-within-10s rule appears only in the *game* webhook guide on dev.oncade.xyz.
   - There's no event or delivery id, so you can't dedupe reliably (I hash the raw body instead).
+  - **Observed in the live run:** I restarted my tunnel, which gave it a new URL, and updated the webhook URL in the portal.
+    The first `Platform.Invoice.Created` delivery then failed against the old URL, and it arrived **60.6s** later at the new
+    URL. So retries happen (the first one after ~60s) and use the URL configured *at retry time*. That's good behaviour,
+    but none of it is documented. A client waiting 60s just misses it, and the receiver can't tell a retry from a first
+    attempt. Publishing the retry schedule, or adding a delivery id and attempt number to the headers, would remove the guesswork.
   - Invoice event payloads aren't shown at all. The docs say to "match via externalMetadata", but don't say whether `externalMetadata` or the invoice id is in `data`.
 
 ### 7. [Confusing] Two different campaign products with no cross-reference
