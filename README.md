@@ -29,7 +29,8 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 | `src/selftest.ts` | Sends valid, replayed, wrong-secret and unsigned deliveries to the local receiver |
 | `test/` | `node:test` suites for signature verification, the handler and the client headers |
 | `FEEDBACK.md` | Part 2 feedback: doc bugs and confusion found while building |
-| `CLAUDE.md` | The context file the AI agent worked from |
+| `CLAUDE.md` | The context file the AI agent worked from: API facts, verified deviations from the docs, guardrails, and agent skills config |
+| `docs/agents/` | Agent skill configuration: issue tracker (GitHub), triage labels, domain-docs layout |
 
 Safety: `config.ts` refuses any key that isn't `oncade_platform_test_…`.
 
@@ -71,6 +72,21 @@ Set `ONCADE_DEBUG=true` to log every request and response.
 3. **Code.** The agent wrote the client, the webhook handler, the flow and the tests in one pass. I reviewed it and steered the decisions:
    zero dependencies, separate receiver and flow processes, and refusing live keys.
 4. **Verification.** Typecheck and 16 unit tests passed before any live call. The live run against the test API is described below.
+
+**Agent setup (committed so it's reusable)**
+- **`CLAUDE.md` is a living context file.** It started as the docs digest. It then gained a "Verified against the live test
+  API" section, so the next agent session trusts real responses over the docs. It also holds hard rules: test keys only,
+  never commit or print secrets, zero runtime dependencies, typecheck and tests before every commit.
+- **Agent skills** ([mattpocock/skills](https://github.com/mattpocock/skills)) are configured in `docs/agents/`:
+  - Issues go to this repo's GitHub Issues.
+  - A triage label vocabulary was created on GitHub: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human` and `wontfix`.
+  - Domain docs use a single-context layout (`GLOSSARY.md` plus `docs/adr/`, created when a term or decision is settled).
+
+  With this in place, skills like `to-spec`, `to-tickets`, `triage`, `tdd` and `diagnosing-bugs` can turn the FEEDBACK items
+  into issues and work them. `ready-for-agent` marks the ones an unattended agent can pick up.
+- **Guardrails in the harness, too.** Claude Code's auto mode let the agent work freely inside the repo, but it stopped
+  outward-facing actions such as creating a public repo on my account. Secrets were never pasted into chat. The agent checked
+  whether `.env` was filled without printing it, and checked before every commit that `.env` wasn't staged.
 
 **Where it saved time**
 - Reading about 200k characters of docs and pulling out what matters, including cross-page contradictions I wouldn't have noticed in an hour.
