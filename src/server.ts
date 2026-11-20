@@ -48,5 +48,5 @@ createServer((req, res) => {
   res.writeHead(404).end();
 }).listen(cfg.webhookPort, () => {
   console.log(`Webhook receiver on http://localhost:${cfg.webhookPort}/webhooks/oncade`);
-  console.log('Expose it with: npm run tunnel   -> then set https://<tunnel>/webhooks/oncade in dev.oncade.xyz Platform > Settings');
+  console.log('Expose it with: npm run tunnel   (prints the URL to paste in dev.oncade.xyz Platform > Settings)');
 });

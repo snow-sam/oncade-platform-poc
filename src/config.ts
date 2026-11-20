@@ -33,7 +33,7 @@ export function loadConfig(need: { api?: boolean; webhooks?: boolean } = { api: 
     sendInvoiceEmail: env('SEND_INVOICE_EMAIL', 'false') === 'true',
     payoutWallet: env('PAYOUT_WALLET', '0x000000000000000000000000000000000000dEaD'),
     businessId: env('ONCADE_BUSINESS_ID', '') || undefined,
-    webhookPort: Number(env('WEBHOOK_PORT', '3000')),
+    webhookPort: Number(env('WEBHOOK_PORT', '3001')),
     debug: env('ONCADE_DEBUG', 'false') === 'true',
   };
 }

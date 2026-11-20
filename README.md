@@ -22,7 +22,7 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 |---|---|
 | `src/client.ts` | Typed client: auth, API version, `X-Target-Business-Id`, automatic `Idempotency-Key` on POST/PUT/PATCH, typed errors, redacted debug logging |
 | `src/webhooks.ts` | HMAC-SHA256 verification over the **raw body** with a constant-time compare; http handler (401 bad sig, 400 bad JSON, 200 on duplicate, 500 on handler error so Oncade retries) |
-| `src/server.ts` | Webhook receiver on `:3000/webhooks/oncade`, writes events to `.data/events.jsonl` |
+| `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), writes events to `.data/events.jsonl` |
 | `src/flow.ts` | The end-to-end run above. It waits for each webhook and falls back to polling the API if the receiver isn't running |
 | `src/selftest.ts` | Sends valid, replayed, wrong-secret and unsigned deliveries to the local receiver |
 | `test/` | `node:test` suites for signature verification, the handler and the client headers |
@@ -42,7 +42,7 @@ npm test                      # offline unit tests
 
 # terminal 1 - webhook receiver
 npm run webhooks
-# terminal 2 - public tunnel; copy the https://….trycloudflare.com URL
+# terminal 2 - public tunnel; prints the full webhook URL to paste
 npm run tunnel
 #   → dev.oncade.xyz → your test platform → Settings → Webhook URL = https://<tunnel>/webhooks/oncade
 npm run webhook:selftest      # optional: proves signature checks locally

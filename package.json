@@ -12,7 +12,7 @@
     "flow": "tsx --env-file=.env src/flow.ts",
     "whoami": "tsx --env-file=.env src/whoami.ts",
     "webhook:selftest": "tsx --env-file=.env src/selftest.ts",
-    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "tunnel": "tsx --env-file=.env src/tunnel.ts",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
