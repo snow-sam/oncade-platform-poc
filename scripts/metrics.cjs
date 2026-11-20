@@ -2,32 +2,57 @@
 // Usage: npm run metrics            (or: node scripts/metrics.cjs [repoRoot])
 // Ca/Ce count production imports between src/ files; CaT = test files importing the module (informational).
 // A   = exported interfaces + type aliases + abstract classes / all exported declarations (naive).
-// A_b = behavioural contracts only: interfaces with methods (or extending one) + abstract classes, over those plus
-//       classes and functions. DTO interfaces, type aliases and Error subclasses are left out of both sides.
-// Verdict (see docs/adr/0001): ok when D_b <= 0.3; entry points (Ca = 0) are on the main sequence by definition;
-// ADR-0001 marks modules accepted in the zone of pain because only composition roots depend on them.
+// A_b = behavioural contracts only: interfaces with methods (or extending another contract) + abstract classes, over
+//       those plus classes and functions. DTO interfaces, type aliases and Error subclasses are left out of both sides.
+//       Known imprecision: an options bag with a callback property (e.g. WebhookHandlerOptions) counts as a contract.
+// Verdict (see docs/adr/0001):
+//   entry point  Ca = 0: a composition root, on the main sequence by definition.
+//   ok           D_b <= 0.3.
+//   ADR-0001     over the threshold and covered by the ADR, while its condition still holds:
+//                concrete modules (client, config) only while every production dependent is an entry point;
+//                pure contracts (event-source) only while A_b = 1.
+//   REVIEW       anything else, including an accepted module that a non-entry module now imports, or D_b = n/a.
+// LCOM lists only classes with methods (error classes with fields only have no cohesion to measure).
 const path = require('path'), fs = require('fs');
 const root = path.resolve(process.argv[2] ?? process.cwd());
-const ts = require(path.join(root, 'node_modules/typescript'));
+const ts = require(require.resolve('typescript', { paths: [root, __dirname] }));
 const srcDir = path.join(root, 'src'), testDir = path.join(root, 'test');
 const files = d => fs.readdirSync(d).filter(f => f.endsWith('.ts')).map(f => path.join(d, f));
 const src = files(srcDir), tests = files(testDir);
 const name = f => path.relative(root, f).split(path.sep).join('/');
 const parse = f => ts.createSourceFile(f, fs.readFileSync(f, 'utf8'), ts.ScriptTarget.Latest, true);
 
-const imports = {}; // file -> Set(internal src files)
+const srcSet = new Set(src);
+const resolveSrc = (from, spec) => {
+  const p = path.resolve(path.dirname(from), spec);
+  return [p, p + '.ts', path.join(p, 'index.ts')].find(c => srcSet.has(c));
+};
+const imports = {}; // file -> Set(src files it imports)
 const ext = {};
 for (const f of [...src, ...tests]) {
   const sf = parse(f); imports[f] = new Set(); ext[f] = new Set();
-  sf.forEachChild(n => {
+  for (const n of sf.statements) {
     if ((ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier) {
       const s = n.moduleSpecifier.text;
-      if (s.startsWith('.')) imports[f].add(path.resolve(path.dirname(f), s)); else ext[f].add(s);
+      if (!s.startsWith('.')) { ext[f].add(s); continue; }
+      const hit = resolveSrc(f, s); if (hit) imports[f].add(hit);
     }
-  });
+  }
 }
 const hasMethodMember = members => members.some(m => ts.isMethodSignature(m) ||
   (ts.isPropertySignature(m) && m.type && ts.isFunctionTypeNode(m.type)));
+
+// Interfaces that are behavioural contracts: they declare methods, or extend an interface that is one.
+const contracts = new Set();
+const allInterfaces = src.flatMap(f => parse(f).statements.filter(ts.isInterfaceDeclaration));
+for (let changed = true; changed;) {
+  changed = false;
+  for (const n of allInterfaces) {
+    if (contracts.has(n.name.text)) continue;
+    const ext = (n.heritageClauses ?? []).flatMap(h => h.types.map(t => t.expression.getText()));
+    if (hasMethodMember(n.members) || ext.some(e => contracts.has(e))) { contracts.add(n.name.text); changed = true; }
+  }
+}
 
 const rows = [];
 for (const f of src) {
@@ -38,7 +63,7 @@ for (const f of src) {
     const exported = n.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
     if (!exported) return;
     if (ts.isInterfaceDeclaration(n)) {
-      abs++; const beh = hasMethodMember(n.members) || (n.heritageClauses?.length ?? 0) > 0;
+      abs++; const beh = contracts.has(n.name.text);
       if (beh) absB++; else data++; decls.push(`${n.name.text}:${beh ? 'contract' : 'data'}`);
     } else if (ts.isTypeAliasDeclaration(n)) {
       abs++; data++; decls.push(`${n.name.text}:type`);
@@ -61,7 +86,7 @@ for (const f of src) {
   const I = Ca + Ce ? Ce / (Ca + Ce) : NaN;
   const A = abs + conc ? abs / (abs + conc) : 0;
   const AB = absB + concB ? absB / (absB + concB) : (abs + conc ? NaN : 0);
-  rows.push({ module: name(f), Ca, CaTests: CaT, Ce, I, A, D: Math.abs(A + I - 1), A_beh: AB, D_beh: Math.abs(AB + I - 1),
+  rows.push({ module: name(f), dependents: src.filter(g => imports[g].has(f)).map(name), Ca, CaTests: CaT, Ce, I, A, D: Math.abs(A + I - 1), A_beh: AB, D_beh: Math.abs(AB + I - 1),
     deps: [...imports[f]].map(x => path.basename(x)).join(','), decls: decls.join(' ') });
 }
 
@@ -101,6 +126,7 @@ for (const f of src) {
       const comps = {};
       for (const k of mnames) (comps[find(k)] ??= []).push(k);
       const m = mnames.length, a = fields.size;
+      if (m === 0) { ts.forEachChild(n, visit); return; }
       const mu = [...fields].map(fl => mnames.filter(k => uses[k].f.has(fl)).length);
       const hs = m > 1 && a ? ((mu.reduce((s, x) => s + x, 0) / a) - m) / (1 - m) : NaN;
       lcom.push({ class: `${name(f)}#${n.name.text}`, methods: m, fields: a, LCOM4: Object.keys(comps).length, LCOM_HS: hs,
@@ -111,9 +137,20 @@ for (const f of src) {
   };
   visit(sf);
 }
-// ADR-0001: stable + concrete, but only composition roots depend on them; event-source is a pure contract.
-const ACCEPTED = new Set(['src/client.ts', 'src/config.ts', 'src/event-source.ts']);
-const verdict = r => r.Ca === 0 ? 'entry point' : !(r.D_beh > 0.3) ? 'ok' : ACCEPTED.has(r.module) ? 'ADR-0001' : 'REVIEW';
+// ADR-0001. Concrete + stable, accepted while only composition roots depend on them:
+const ACCEPTED_CONCRETE = new Set(['src/client.ts', 'src/config.ts']);
+// Pure contracts whose distance comes only from importing DTOs, accepted while they stay pure (A_b = 1):
+const ACCEPTED_CONTRACT = new Set(['src/event-source.ts']);
+const isEntry = new Set(rows.filter(r => r.Ca === 0).map(r => r.module));
+const verdict = r => {
+  if (r.Ca === 0) return 'entry point';
+  if (Number.isNaN(r.D_beh)) return 'REVIEW (D_b n/a)';
+  if (r.D_beh <= 0.3) return 'ok';
+  if (ACCEPTED_CONTRACT.has(r.module)) return r.A_beh === 1 ? 'ADR-0001' : 'REVIEW (ADR-0001 void: no longer a pure contract)';
+  if (!ACCEPTED_CONCRETE.has(r.module)) return 'REVIEW';
+  const inner = r.dependents.filter(d => !isEntry.has(d));
+  return inner.length ? `REVIEW (ADR-0001 void: ${inner.join(', ')})` : 'ADR-0001';
+};
 const r2 = x => Number.isNaN(x) ? 'n/a' : x.toFixed(2);
 console.log('## Martin (production imports; CaTests = test files importing it)');
 console.log('module | Ca | CaT | Ce | I | A | D | A_b | D_b | verdict | imports | exported decls');

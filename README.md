@@ -126,6 +126,7 @@ and the event was lost. The live run had just shown that Oncade does retry, abou
 **Webhook inbox** module that stores first and marks seen only after a successful write, with reactions moved after the
 response. Four shallow classes (two dedupe stores, two event sources) became two adapters of one module. A regression test
 replays a delivery whose first store failed.
+
 **Metrics pass ([#3](https://github.com/snow-sam/oncade-platform-poc/issues/3)).** I asked for a cohesion and coupling
 review using LCOM and Martin's metrics. No skill computes these, so the agent wrote `scripts/metrics.cjs` on the
 TypeScript compiler API. A short grilling session settled how to read the numbers. Martin's metrics were designed for
@@ -133,19 +134,27 @@ packages, so the unit is a file and only production imports count. Abstractness 
 because counting DTO interfaces would make `types.ts` look abstract. A high D only needs action when a module that isn't
 an entry point depends on a volatile, concrete one.
 
-- Cohesion: LCOM4 = 1 for every class, so nothing changed. LCOM-HS is high for `OncadeClient` and `FileInbox`, but that
+- Cohesion: LCOM4 = 1 for every class that has methods (the two error classes only hold fields), so nothing changed. LCOM-HS is high for `OncadeClient` and `FileInbox`, but that
   comes from the metric (one shared field, one private helper), not from a design problem.
 - Coupling: two edges were real problems and were removed. Neither change alters behaviour, and the 42 tests stayed green.
 
 | Module | Before (Ca/Ce · I · D_b) | After | Change |
 |---|---|---|---|
 | `invoice-lifecycle.ts` | 1/3 · 0.75 · 0.25 | 1/2 · 0.67 · **0.17** | declares its own `InvoiceApi` (the 4 methods it uses) and no longer imports `client.ts` |
-| `webhook-inbox.ts` | 3/3 · 0.50 · 0.00 | 3/2 · 0.40 · 0.10 | `FileInbox` takes its file from the caller and no longer imports `config.ts` |
-| `client.ts` | 4/1 · 0.20 · 0.80 | 3/1 · 0.25 · 0.75 | accepted: only entry points depend on it now (ADR-0001) |
-| `config.ts` | 6/0 · 0.00 · 1.00 | 5/0 · 0.00 · 1.00 | accepted: only entry points depend on it now (ADR-0001) |
+| `webhook-inbox.ts` | 3/3 · 0.50 · 0.17 | 3/2 · 0.40 · 0.27 | `FileInbox` takes its file from the caller and no longer imports `config.ts`. D_b went *up* (fewer outgoing deps, so less unstable) but stays under 0.3. The point was the edge, not the number |
+| `client.ts` | 4/1 · 0.20 · 0.80 `REVIEW` | 3/1 · 0.25 · 0.75 | accepted: only entry points depend on it now (ADR-0001) |
+| `config.ts` | 6/0 · 0.00 · 1.00 `REVIEW` | 5/0 · 0.00 · 1.00 | accepted: only entry points depend on it now (ADR-0001) |
 
 The agent deliberately did *not* add a single-adapter `OncadeApi` interface just to raise `A`. That would improve the
-number and add an indirection with nothing behind it. ADR-0001 records when to revisit.
+number and add an indirection with nothing behind it. ADR-0001 records when to revisit, and the script checks the ADR's
+conditions instead of trusting a fixed list. Run on the "before" commit, it flags exactly the two edges that were removed.
+
+A `/code-review` pass (Standards and Spec axes, run in parallel sub-agents) then caught bugs in the metrics script itself:
+- An interface extending a DTO was counted as a contract, which understated `webhook-inbox`'s distance.
+- The ADR exemption was a fixed list that never checked its own condition.
+- An n/a distance printed as `ok`.
+
+They were fixed, and the table above uses the corrected script.
 
 One more AI slip, caught during the first pass's live check: to simulate "receiver down" it picked port 3999, where another local app
 answered 200 on `/health`, so the flow treated it as the receiver. The fix was making `/health` identify itself rather than trusting any 200.

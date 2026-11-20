@@ -58,8 +58,8 @@ export class InMemoryInbox implements WebhookInbox {
 
 /**
  * Append-only JSONL file. The receiver process writes it, and other processes (the flow) read it by polling.
- * Single-writer by design (one receiver process), so no locking. The caller picks the file (`EVENTS_FILE` in config.ts
- * is the one the receiver and the flow share), so this module never touches env or cwd.
+ * Single-writer by design (one receiver process), so no locking. The caller picks the file, so this module never
+ * touches env or cwd.
  */
 export class FileInbox implements WebhookInbox {
   private readonly file: string;

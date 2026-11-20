@@ -56,7 +56,7 @@ export class InvoiceLifecycle {
   private readonly events?: EventSource;
   private readonly webhookTimeoutMs: number;
 
-  constructor(private readonly client: InvoiceApi, opts: { events?: EventSource; webhookTimeoutMs?: number } = {}) {
+  constructor(private readonly api: InvoiceApi, opts: { events?: EventSource; webhookTimeoutMs?: number } = {}) {
     this.events = opts.events;
     this.webhookTimeoutMs = opts.webhookTimeoutMs ?? 60_000;
   }
@@ -65,17 +65,17 @@ export class InvoiceLifecycle {
     // Strip any status the caller smuggled in: issuing always produces a draft.
     const { status: _ignored, ...rest } = draft as CreateInvoiceInput;
     return this.transition('issue', 'draft', 'Platform.Invoice.Created', opts,
-      () => this.client.createInvoice({ ...rest, status: 'draft' }, randomUUID()));
+      () => this.api.createInvoice({ ...rest, status: 'draft' }, randomUUID()));
   }
 
   send(invoiceId: string, opts: CallOptions & { sendEmail?: boolean } = {}): Promise<Confirmation> {
     return this.transition('send', 'sent', 'Platform.Invoice.Sent', opts,
-      () => this.client.sendInvoice(invoiceId, { sendEmail: opts.sendEmail ?? false }));
+      () => this.api.sendInvoice(invoiceId, { sendEmail: opts.sendEmail ?? false }));
   }
 
   cancel(invoiceId: string, opts: CallOptions = {}): Promise<Confirmation> {
     return this.transition('cancel', 'cancelled', 'Platform.Invoice.Cancelled', opts,
-      () => this.client.cancelInvoice(invoiceId));
+      () => this.api.cancelInvoice(invoiceId));
   }
 
   private async transition(
@@ -87,7 +87,7 @@ export class InvoiceLifecycle {
     let invoice: Invoice;
     try {
       const acted = await act();
-      invoice = await this.client.getInvoice(acted._id);
+      invoice = await this.api.getInvoice(acted._id);
     } catch (err) {
       throw new InvoiceLifecycleError(`${name} failed: ${(err as Error).message}`, { expected, cause: err });
     }
