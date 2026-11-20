@@ -30,6 +30,8 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 | `src/idempotency-check.ts` | Sends the same `Idempotency-Key` three times to see whether the API dedupes. Found FEEDBACK #10 |
 | `src/tunnel.ts` | Starts a `cloudflared` quick tunnel on `WEBHOOK_PORT` and prints the URL to paste in the portal |
 | `src/selftest.ts` | Sends valid, replayed, wrong-secret and unsigned deliveries to the local receiver |
+| `scripts/metrics.cjs` | `npm run metrics`: cohesion (LCOM4 per class) and coupling (Martin's Ca, Ce, I, A, D per module), with a verdict per module |
+| `docs/adr/` | Architecture decisions. ADR-0001 explains why `client.ts` and `config.ts` stay in the zone of pain |
 | `test/` | `node:test` suites at module interfaces: Invoice lifecycle (fake Oncade behind the fetch seam + in-memory Event source), Event source adapters, Platform identity, webhook verification and handler, client headers |
 | `GLOSSARY.md` | Domain terms used in code and issues |
 | `FEEDBACK.md` | Part 2 feedback: doc bugs and confusion found while building |
@@ -124,6 +126,26 @@ and the event was lost. The live run had just shown that Oncade does retry, abou
 **Webhook inbox** module that stores first and marks seen only after a successful write, with reactions moved after the
 response. Four shallow classes (two dedupe stores, two event sources) became two adapters of one module. A regression test
 replays a delivery whose first store failed.
+**Metrics pass ([#3](https://github.com/snow-sam/oncade-platform-poc/issues/3)).** I asked for a cohesion and coupling
+review using LCOM and Martin's metrics. No skill computes these, so the agent wrote `scripts/metrics.cjs` on the
+TypeScript compiler API. A short grilling session settled how to read the numbers. Martin's metrics were designed for
+packages, so the unit is a file and only production imports count. Abstractness counts only behavioural contracts,
+because counting DTO interfaces would make `types.ts` look abstract. A high D only needs action when a module that isn't
+an entry point depends on a volatile, concrete one.
+
+- Cohesion: LCOM4 = 1 for every class, so nothing changed. LCOM-HS is high for `OncadeClient` and `FileInbox`, but that
+  comes from the metric (one shared field, one private helper), not from a design problem.
+- Coupling: two edges were real problems and were removed. Neither change alters behaviour, and the 42 tests stayed green.
+
+| Module | Before (Ca/Ce · I · D_b) | After | Change |
+|---|---|---|---|
+| `invoice-lifecycle.ts` | 1/3 · 0.75 · 0.25 | 1/2 · 0.67 · **0.17** | declares its own `InvoiceApi` (the 4 methods it uses) and no longer imports `client.ts` |
+| `webhook-inbox.ts` | 3/3 · 0.50 · 0.00 | 3/2 · 0.40 · 0.10 | `FileInbox` takes its file from the caller and no longer imports `config.ts` |
+| `client.ts` | 4/1 · 0.20 · 0.80 | 3/1 · 0.25 · 0.75 | accepted: only entry points depend on it now (ADR-0001) |
+| `config.ts` | 6/0 · 0.00 · 1.00 | 5/0 · 0.00 · 1.00 | accepted: only entry points depend on it now (ADR-0001) |
+
+The agent deliberately did *not* add a single-adapter `OncadeApi` interface just to raise `A`. That would improve the
+number and add an indirection with nothing behind it. ADR-0001 records when to revisit.
 
 One more AI slip, caught during the first pass's live check: to simulate "receiver down" it picked port 3999, where another local app
 answered 200 on `/health`, so the flow treated it as the receiver. The fix was making `/health` identify itself rather than trusting any 200.

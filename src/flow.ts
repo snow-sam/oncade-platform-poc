@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { OncadeClient } from './client.ts';
-import { DATA_DIR, loadConfig } from './config.ts';
+import { DATA_DIR, EVENTS_FILE, loadConfig } from './config.ts';
 import { type Confirmation, InvoiceLifecycle, InvoiceLifecycleError } from './invoice-lifecycle.ts';
 import { FileInbox } from './webhook-inbox.ts';
 
@@ -94,7 +94,7 @@ async function main() {
   const receiverUp = await fetch(`http://localhost:${cfg.webhookPort}/health`)
     .then(async r => r.ok && (await r.text()) === 'oncade-platform-poc/webhooks', () => false);
   if (!receiverUp) warn('webhook receiver not running (npm run webhooks) - confirming via API only');
-  const lifecycle = new InvoiceLifecycle(biz, { events: receiverUp ? new FileInbox() : undefined });
+  const lifecycle = new InvoiceLifecycle(biz, { events: receiverUp ? new FileInbox({ file: EVENTS_FILE }) : undefined });
 
   step(4, 'issue() - draft invoice');
   const today = new Date();

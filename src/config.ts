@@ -2,6 +2,8 @@ import { resolve } from 'node:path';
 
 /** Local state shared by the receiver and the flow (event log, saved business id). */
 export const DATA_DIR = resolve('.data');
+/** The Webhook inbox file: the receiver appends to it, the flow polls it. */
+export const EVENTS_FILE = resolve(DATA_DIR, 'events.jsonl');
 
 export interface Config {
   apiKey: string;

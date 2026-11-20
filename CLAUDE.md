@@ -41,7 +41,9 @@ When the guide and the reference disagree, trust **actual API responses**, then 
   interface · `src/webhook-inbox.ts` Webhook inbox (store-once + Event source; FileInbox / InMemoryInbox)
 - `src/client.ts` typed API client + `platform()` (Platform identity) + live-key guard · `src/webhooks.ts` signature
   verification + http handler · `src/server.ts` webhook receiver · `src/flow.ts` demo, presentation only
-- `test/` node:test suites at module interfaces. Terms: `GLOSSARY.md`.
+- `test/` node:test suites at module interfaces. Terms: `GLOSSARY.md`. Decisions: `docs/adr/`.
+- `npm run metrics` (LCOM4 + Martin's I/A/D). No module should print `REVIEW`. Modules that aren't entry points depend on a
+  port they own (e.g. `InvoiceApi`), not on `OncadeClient` or `config.ts` (ADR-0001).
 
 ## Agent skills
 

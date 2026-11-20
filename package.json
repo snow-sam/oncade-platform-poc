@@ -15,7 +15,8 @@
     "webhook:selftest": "tsx --env-file=.env src/selftest.ts",
     "tunnel": "tsx --env-file=.env src/tunnel.ts",
     "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "metrics": "node scripts/metrics.cjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

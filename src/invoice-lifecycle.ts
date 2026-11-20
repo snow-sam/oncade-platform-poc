@@ -1,7 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import type { OncadeClient } from './client.ts';
 import type { EventSource } from './event-source.ts';
 import type { CreateInvoiceInput, Invoice, InvoiceStatus, WebhookEvent } from './types.ts';
+
+/**
+ * The part of the Oncade API the Invoice lifecycle needs, declared here so this module depends on what it uses rather
+ * than on the whole client. A business-scoped `OncadeClient` (`client.forBusiness(id)`) satisfies it as is.
+ */
+export interface InvoiceApi {
+  createInvoice(input: CreateInvoiceInput, idempotencyKey?: string): Promise<Invoice>;
+  getInvoice(invoiceId: string): Promise<Invoice>;
+  sendInvoice(invoiceId: string, opts: { sendEmail?: boolean }): Promise<Invoice>;
+  cancelInvoice(invoiceId: string): Promise<Invoice>;
+}
 
 /** What the caller supplies to issue an invoice. Status is always draft; use send() to move it on. */
 export type InvoiceDraft = Omit<CreateInvoiceInput, 'status'>;
@@ -46,7 +56,7 @@ export class InvoiceLifecycle {
   private readonly events?: EventSource;
   private readonly webhookTimeoutMs: number;
 
-  constructor(private readonly client: OncadeClient, opts: { events?: EventSource; webhookTimeoutMs?: number } = {}) {
+  constructor(private readonly client: InvoiceApi, opts: { events?: EventSource; webhookTimeoutMs?: number } = {}) {
     this.events = opts.events;
     this.webhookTimeoutMs = opts.webhookTimeoutMs ?? 60_000;
   }

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { DATA_DIR } from './config.ts';
+import { dirname } from 'node:path';
 import type { EventSource } from './event-source.ts';
 import type { WebhookEvent } from './types.ts';
 
@@ -57,11 +56,10 @@ export class InMemoryInbox implements WebhookInbox {
   }
 }
 
-export const EVENTS_FILE = resolve(DATA_DIR, 'events.jsonl');
-
 /**
  * Append-only JSONL file. The receiver process writes it, and other processes (the flow) read it by polling.
- * Single-writer by design (one receiver process), so no locking.
+ * Single-writer by design (one receiver process), so no locking. The caller picks the file (`EVENTS_FILE` in config.ts
+ * is the one the receiver and the flow share), so this module never touches env or cwd.
  */
 export class FileInbox implements WebhookInbox {
   private readonly file: string;
@@ -69,8 +67,8 @@ export class FileInbox implements WebhookInbox {
   private readonly pollMs: number;
   private readonly seen: Set<string>;
 
-  constructor(opts: { file?: string; now?: () => Date; pollMs?: number } = {}) {
-    this.file = opts.file ?? EVENTS_FILE;
+  constructor(opts: { file: string; now?: () => Date; pollMs?: number }) {
+    this.file = opts.file;
     this.now = opts.now ?? (() => new Date());
     this.pollMs = opts.pollMs ?? 500;
     this.seen = new Set(this.read().map(e => e.deliveryKey));
