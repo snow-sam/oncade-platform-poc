@@ -38,3 +38,17 @@ When the guide and the reference disagree, trust **actual API responses**, then 
 - `src/client.ts` typed API client · `src/webhooks.ts` signature verification + http handler
 - `src/server.ts` webhook receiver · `src/flow.ts` end-to-end demo · `src/eventlog.ts` file-backed event log shared
   between the two processes · `test/` node:test suites
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for snow-sam/oncade-platform-poc (via `gh`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root (created lazily). See `docs/agents/domain.md`.
