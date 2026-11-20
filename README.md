@@ -179,6 +179,34 @@ It ran two sub-agents in parallel so neither axis could mask the other:
 
 Fixes landed in a follow-up commit that references #3. Tests stayed at 42/42 and no module prints `REVIEW`.
 
+**Clean Code pass ([#4](https://github.com/snow-sam/oncade-platform-poc/issues/4)).** Last, I asked for a readability
+pass on names and definitions using Clean Code principles, with one constraint: **respect the metrics**. Before any
+edit, a grilling round settled nine decisions, and each one came with its metric impact. Helpers stay unexported (only
+exported declarations count toward A), and shared constants go to `config.ts` (only entry points import it).
+
+- **Names say what they are.** Client methods are verbs and use the GLOSSARY terms: `getPlatformIdentity()` and
+  `getReadiness()`. `PlatformIdentity.effectiveScopes` is the GLOSSARY's "Effective scopes". `computeSignature()`
+  pairs with `verifySignature()`, and `reactTo()` names the "react later" side of the inbox. Abbreviations
+  (`cfg`, `opts`, `biz`, `r`, `d`, `p`) became full words wherever the scope is longer than one line.
+- **Fewer arguments.** `transition('send', 'sent', 'Platform.Invoice.Sent', opts, act)` became `confirm('send', options,
+  performAction)` with a private `TRANSITIONS` table.
+- **Small functions.** `flow.ts`'s 80-line `main()` now reads as steps (`checkPlatformIdentity`, `ensureBusiness`,
+  `checkReadiness`, `isReceiverUp`, `sampleInvoiceDraft`). The webhook handler extracts `parseEvent()` and
+  `firstHeader()`.
+- **One source per value.** The receiver id was repeated as a literal in the flow, so changing one silently broke the
+  health check. It now has one definition, as do the webhook and health paths, the state file, the signature header and
+  the invoice event names (`INVOICE_EVENTS`). `verifySignature()` reuses `computeSignature()` instead of computing the
+  HMAC again.
+- **Accurate definitions.** The docs still said `config.ts` refused live keys. That guard moved into the
+  `OncadeClient` constructor in pass #1, and the docs now say so.
+
+A `/code-review` of the pass found that it had broken its own "one source per value" rule. It had also changed a few
+behaviours without saying so (`me()` is private now, `/health?x` answers, `whoami` prints `effectiveScopes`). The
+follow-up commit fixed the duplication and records each behaviour change. Result: LCOM4 is still 1 for every class and
+no module prints `REVIEW`. `invoice-lifecycle`'s D_b went from 0.17 to 0.00, because the receiver now imports
+`INVOICE_EVENTS` from it. Tests still spell event names out literally, so they act as an independent check on the
+constants.
+
 One more AI slip, caught during the first pass's live check: to simulate "receiver down" it picked port 3999, where another local app
 answered 200 on `/health`, so the flow treated it as the receiver. The fix was making `/health` identify itself rather than trusting any 200.
 
