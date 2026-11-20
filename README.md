@@ -21,10 +21,11 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 | File | What |
 |---|---|
 | `src/invoice-lifecycle.ts` | **Invoice lifecycle** module: `issue()`, `send()` and `cancel()` each return a **Confirmation** (API read-back + webhook `received`/`timeout`/`skipped`); a state mismatch throws |
-| `src/event-source.ts` | **Event source** interface + in-memory adapter; the file adapter is in `src/eventlog.ts` |
+| `src/webhook-inbox.ts` | **Webhook inbox**: stores each verified delivery exactly once (`record` → new/duplicate, marked seen only after a successful write) and serves stored deliveries as an Event source. Adapters: `FileInbox` and `InMemoryInbox`, both run against one contract suite |
+| `src/event-source.ts` | **Event source** interface: the read side the Invoice lifecycle depends on |
 | `src/client.ts` | Typed client: auth, API version, `X-Target-Business-Id`, automatic UUID `Idempotency-Key` on POST/PUT/PATCH, typed errors, redacted debug logging. `platform()` normalizes `/me` into **Platform identity** with `can(scope)`. The constructor refuses non-test keys |
-| `src/webhooks.ts` | HMAC-SHA256 verification over the **raw body** with a constant-time compare; http handler (401 bad sig, 400 bad JSON, 200 on duplicate, 500 on handler error so Oncade retries) |
-| `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), writes events to `.data/events.jsonl`; `/health` identifies itself |
+| `src/webhooks.ts` | HMAC-SHA256 verification over the **raw body** with a constant-time compare. The http handler stores first and reacts later: 401 bad sig, 400 bad JSON, 200 once stored or duplicate, 500 only if storing fails (so Oncade retries); `afterRecord` runs after the response |
+| `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), stores deliveries in a `FileInbox` (`.data/events.jsonl`); `/health` identifies itself |
 | `src/flow.ts` | The end-to-end demo, presentation only. It provisions the business, checks whether the receiver is up, and prints each Confirmation |
 | `src/idempotency-check.ts` | Sends the same `Idempotency-Key` three times to see whether the API dedupes. Found FEEDBACK #10 |
 | `src/tunnel.ts` | Starts a `cloudflared` quick tunnel on `WEBHOOK_PORT` and prints the URL to paste in the portal |
@@ -116,7 +117,15 @@ red, then green, at the module interfaces. It was verified live on both paths (r
 receiver down: `skipped`, still confirmed by the API). Result: the most fragile logic moved out of an untested script into
 the Invoice lifecycle module, which has 10 interface tests. The `/me` drift now lives in one place (`client.platform()`), and a
 docs-driven helper (`payloadMentions`) was deleted.
-One more AI slip, caught during that live check: to simulate "receiver down" it picked port 3999, where another local app
+**Second architecture pass ([#2](https://github.com/snow-sam/oncade-platform-poc/issues/2)).** Re-reading the webhook
+code for candidate #3 surfaced a real bug that the original tests missed. The handler marked a delivery as seen *before*
+processing it. If processing failed, it answered 500 so Oncade would retry, but the retry was then acknowledged as a duplicate
+and the event was lost. The live run had just shown that Oncade does retry, about 60s later. The fix was structural: a
+**Webhook inbox** module that stores first and marks seen only after a successful write, with reactions moved after the
+response. Four shallow classes (two dedupe stores, two event sources) became two adapters of one module. A regression test
+replays a delivery whose first store failed.
+
+One more AI slip, caught during the first pass's live check: to simulate "receiver down" it picked port 3999, where another local app
 answered 200 on `/health`, so the flow treated it as the receiver. The fix was making `/health` identify itself rather than trusting any 200.
 
 Tooling friction: Claude Code's auto-mode guardrail blocked the agent from creating a *public* GitHub repo on my account.

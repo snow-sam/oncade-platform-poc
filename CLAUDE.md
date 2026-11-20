@@ -26,6 +26,8 @@ When the guide and the reference disagree, trust **actual API responses**, then 
 ## Verified against the live test API (overrides the docs)
 - `GET /me`: scopes are in `keyInfo.activeScopes`, plus a top-level `approvedScopes`. Effective = intersection.
 - `Idempotency-Key` must be a UUID (400 otherwise), and it is **not enforced**: the same key creates duplicates. Don't rely on it for safety.
+- Webhooks are retried (first retry ~60s, observed), and retries go to the URL configured at retry time. Never mark a
+  delivery seen before it is stored.
 - Invoice webhooks carry `data.invoiceId`, `status`, `total`, etc., but not `externalMetadata`.
 
 ## Rules
@@ -36,7 +38,7 @@ When the guide and the reference disagree, trust **actual API responses**, then 
 
 ## Layout
 - `src/invoice-lifecycle.ts` Invoice lifecycle module (issue/send/cancel → Confirmation) · `src/event-source.ts` Event source
-  interface + in-memory adapter · `src/eventlog.ts` file event log + FileEventSource adapter
+  interface · `src/webhook-inbox.ts` Webhook inbox (store-once + Event source; FileInbox / InMemoryInbox)
 - `src/client.ts` typed API client + `platform()` (Platform identity) + live-key guard · `src/webhooks.ts` signature
   verification + http handler · `src/server.ts` webhook receiver · `src/flow.ts` demo, presentation only
 - `test/` node:test suites at module interfaces. Terms: `GLOSSARY.md`.

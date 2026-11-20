@@ -1,3 +1,8 @@
+import { resolve } from 'node:path';
+
+/** Local state shared by the receiver and the flow (event log, saved business id). */
+export const DATA_DIR = resolve('.data');
+
 export interface Config {
   apiKey: string;
   webhookSecret: string;

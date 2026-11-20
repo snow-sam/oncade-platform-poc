@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { loadConfig } from './config.ts';
-import { appendEvent, FileDedupeStore } from './eventlog.ts';
+import { FileInbox } from './webhook-inbox.ts';
 import { createWebhookHandler } from './webhooks.ts';
 import type { WebhookEvent } from './types.ts';
 
@@ -34,11 +34,11 @@ function handle(event: WebhookEvent) {
 
 const handler = createWebhookHandler({
   secret: cfg.webhookSecret,
-  dedupe: new FileDedupeStore(),
+  inbox: new FileInbox(),
   log: m => console.warn(`[webhooks] ${m}`),
-  onEvent: (event, meta) => {
+  // Runs after the delivery is stored and acknowledged; a failure here can't lose the event.
+  afterRecord: (event, meta) => {
     console.log(`[webhooks] ${new Date().toISOString()} ${event.event} (platform ${meta.platformId ?? '?'})`);
-    appendEvent({ ...event, receivedAt: new Date().toISOString(), deliveryKey: meta.deliveryKey });
     handle(event);
   },
 });

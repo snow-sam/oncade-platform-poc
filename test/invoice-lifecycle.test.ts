@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { OncadeApiError, OncadeClient } from '../src/client.ts';
-import { InMemoryEventSource } from '../src/event-source.ts';
+import { InMemoryInbox } from '../src/webhook-inbox.ts';
 import { InvoiceLifecycle, InvoiceLifecycleError, type InvoiceDraft } from '../src/invoice-lifecycle.ts';
 import type { Invoice, InvoiceStatus } from '../src/types.ts';
 
@@ -10,7 +10,7 @@ import type { Invoice, InvoiceStatus } from '../src/types.ts';
  * `webhooks` controls whether/when it emits deliveries into the in-memory Event source.
  */
 function fakeOncade(opts: {
-  events?: InMemoryEventSource;
+  events?: InMemoryInbox;
   webhooks?: 'before-response' | 'after-response' | 'none' | 'wrong-invoice';
   sendLeavesStatus?: InvoiceStatus;
   failWith?: { path: RegExp; status: number; body: unknown };
@@ -20,11 +20,14 @@ function fakeOncade(opts: {
   let seq = 0;
 
   const emit = (event: string, inv: Invoice) => {
-    const deliver = () => opts.events?.push({
-      event,
-      data: { invoiceId: opts.webhooks === 'wrong-invoice' ? 'someone-else' : inv._id, status: inv.status },
-      timestamp: new Date().toISOString(),
-    });
+    const deliver = () => {
+      const e = {
+        event,
+        data: { invoiceId: opts.webhooks === 'wrong-invoice' ? 'someone-else' : inv._id, status: inv.status },
+        timestamp: new Date().toISOString(),
+      };
+      void opts.events?.record(Buffer.from(JSON.stringify(e)), e);
+    };
     if (opts.webhooks === 'none') return;
     if (opts.webhooks === 'after-response') setTimeout(deliver, 20);
     else deliver();
@@ -74,7 +77,7 @@ const FAST = { webhookTimeoutMs: 100 };
 
 describe('InvoiceLifecycle', () => {
   it('issue → send → cancel, each confirmed by API read-back and webhook', async () => {
-    const events = new InMemoryEventSource();
+    const events = new InMemoryInbox();
     const { client } = fakeOncade({ events, webhooks: 'after-response' });
     const lifecycle = new InvoiceLifecycle(client, { events, ...FAST });
 
@@ -92,14 +95,14 @@ describe('InvoiceLifecycle', () => {
   });
 
   it('counts a webhook that arrives before the wait starts', async () => {
-    const events = new InMemoryEventSource();
+    const events = new InMemoryInbox();
     const { client } = fakeOncade({ events, webhooks: 'before-response' });
     const issued = await new InvoiceLifecycle(client, { events, ...FAST }).issue(DRAFT);
     assert.equal(issued.webhook.status, 'received');
   });
 
   it('reports a missing webhook as timeout, without failing', async () => {
-    const events = new InMemoryEventSource();
+    const events = new InMemoryInbox();
     const { client } = fakeOncade({ events, webhooks: 'none' });
     const issued = await new InvoiceLifecycle(client, { events, ...FAST }).issue(DRAFT);
     assert.equal(issued.invoice.status, 'draft');
@@ -107,7 +110,7 @@ describe('InvoiceLifecycle', () => {
   });
 
   it('ignores webhooks for other invoices', async () => {
-    const events = new InMemoryEventSource();
+    const events = new InMemoryInbox();
     const { client } = fakeOncade({ events, webhooks: 'wrong-invoice' });
     const issued = await new InvoiceLifecycle(client, { events, ...FAST }).issue(DRAFT);
     assert.equal(issued.webhook.status, 'timeout');
@@ -122,7 +125,7 @@ describe('InvoiceLifecycle', () => {
   });
 
   it('per-call timeout overrides the default', async () => {
-    const events = new InMemoryEventSource();
+    const events = new InMemoryInbox();
     const { client } = fakeOncade({ events, webhooks: 'none' });
     const lifecycle = new InvoiceLifecycle(client, { events, webhookTimeoutMs: 60_000 });
     const started = Date.now();
@@ -162,34 +165,5 @@ describe('InvoiceLifecycle', () => {
     const sends = requests.filter(r => r.path.endsWith('/send'));
     assert.equal(sends[0]!.body.sendEmail, false);
     assert.equal(sends[1]!.body.sendEmail, true);
-  });
-});
-
-describe('InMemoryEventSource', () => {
-  it('only returns events at or after `since`', async () => {
-    const events = new InMemoryEventSource();
-    events.push({ event: 'A', data: {} }, new Date(Date.now() - 10_000));
-    const hit = await events.waitFor(e => e.event === 'A', { since: new Date(Date.now() - 1000), timeoutMs: 30 });
-    assert.equal(hit, undefined);
-  });
-});
-
-describe('FileEventSource', () => {
-  it('honours the Event source contract over the receiver log', async () => {
-    const { mkdtempSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const { appendEvent, FileEventSource } = await import('../src/eventlog.ts');
-    const file = join(mkdtempSync(join(tmpdir(), 'oncade-')), 'events.jsonl');
-    const source = new FileEventSource(file, 10);
-    const since = new Date();
-
-    appendEvent({ event: 'Old', data: {}, receivedAt: new Date(since.getTime() - 5000).toISOString(), deliveryKey: 'a' }, file);
-    appendEvent({ event: 'Early', data: { invoiceId: 'i1' }, receivedAt: new Date().toISOString(), deliveryKey: 'b' }, file);
-    setTimeout(() => appendEvent({ event: 'Late', data: {}, receivedAt: new Date().toISOString(), deliveryKey: 'c' }, file), 30);
-
-    assert.equal((await source.waitFor(e => e.event === 'Early', { since, timeoutMs: 100 }))?.data.invoiceId, 'i1');
-    assert.ok(await source.waitFor(e => e.event === 'Late', { since, timeoutMs: 500 }));
-    assert.equal(await source.waitFor(e => e.event === 'Old', { since, timeoutMs: 50 }), undefined);
   });
 });

@@ -1,6 +1,7 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { WebhookEvent } from './types.ts';
+import type { WebhookInbox } from './webhook-inbox.ts';
 
 /**
  * Verify `x-oncade-signature`: hex HMAC-SHA256 of the *raw* request body, keyed with the platform webhook secret.
@@ -18,24 +19,15 @@ export function sign(rawBody: Buffer | string, secret: string): string {
   return createHmac('sha256', secret).update(rawBody).digest('hex');
 }
 
-export interface DedupeStore {
-  /** Returns true if the key was newly added, false if it was seen before. */
-  add(key: string): boolean;
-}
-
-export class MemoryDedupeStore implements DedupeStore {
-  private seen = new Set<string>();
-  add(key: string) {
-    if (this.seen.has(key)) return false;
-    this.seen.add(key);
-    return true;
-  }
-}
-
 export interface WebhookHandlerOptions {
   secret: string;
-  onEvent: (event: WebhookEvent, meta: { platformId?: string; deliveryKey: string }) => void | Promise<void>;
-  dedupe?: DedupeStore;
+  /** Where verified deliveries are stored (exactly once). */
+  inbox: WebhookInbox;
+  /**
+   * Reaction to a *new* delivery. It runs after the response is sent, so it can't cause a retry. Its errors are logged.
+   * Anything that must not be lost should read from the inbox instead.
+   */
+  afterRecord?: (event: WebhookEvent, meta: { platformId?: string }) => void | Promise<void>;
   maxBodyBytes?: number;
   log?: (msg: string) => void;
 }
@@ -59,14 +51,12 @@ function reply(res: ServerResponse, status: number, body: object) {
 }
 
 /**
- * Node http handler for Oncade webhooks.
- * - 401 on missing/invalid signature
- * - 400 on malformed JSON
- * - 200 on duplicates (the docs say deliveries are retried with no event id, so we dedupe on a body hash)
- * - 500 if the handler throws, so Oncade retries
+ * Node http handler for Oncade webhooks. Store first, react later:
+ * - 401 on missing/invalid signature, 400 on malformed JSON (nothing stored)
+ * - 200 `{ok}` once a new delivery is stored, 200 `{ok, duplicate}` for a delivery stored before
+ * - 500 only if storing fails, so Oncade retries (and the inbox hasn't marked it seen)
  */
 export function createWebhookHandler(opts: WebhookHandlerOptions) {
-  const dedupe = opts.dedupe ?? new MemoryDedupeStore();
   const log = opts.log ?? (() => {});
   const max = opts.maxBodyBytes ?? 1_000_000;
 
@@ -93,19 +83,26 @@ export function createWebhookHandler(opts: WebhookHandlerOptions) {
     const headerEvent = req.headers['x-oncade-event'];
     if (headerEvent && headerEvent !== event.event) log(`warning: x-oncade-event (${headerEvent}) != body.event (${event.event})`);
 
-    const deliveryKey = createHash('sha256').update(raw).digest('hex');
-    if (!dedupe.add(deliveryKey)) {
+    let result;
+    try {
+      result = await opts.inbox.record(raw, event);
+    } catch (err) {
+      log(`could not store ${event.event}: ${(err as Error).message} - answering 500 so Oncade retries`);
+      return reply(res, 500, { error: 'could not store delivery' });
+    }
+    if (result === 'duplicate') {
       log(`duplicate delivery ignored: ${event.event}`);
       return reply(res, 200, { ok: true, duplicate: true });
     }
+    reply(res, 200, { ok: true });
 
-    try {
+    if (opts.afterRecord) {
       const platformId = req.headers['x-oncade-platform-id'];
-      await opts.onEvent(event, { platformId: Array.isArray(platformId) ? platformId[0] : platformId, deliveryKey });
-    } catch (err) {
-      log(`handler failed for ${event.event}: ${(err as Error).message}`);
-      return reply(res, 500, { error: 'handler failed' });
+      try {
+        await opts.afterRecord(event, { platformId: Array.isArray(platformId) ? platformId[0] : platformId });
+      } catch (err) {
+        log(`reaction failed for ${event.event}: ${(err as Error).message} (event is stored)`);
+      }
     }
-    return reply(res, 200, { ok: true });
   };
 }
