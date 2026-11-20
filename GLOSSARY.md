@@ -21,7 +21,7 @@ stored, so a failed store gets processed on Oncade's retry. Store first, react l
 cause a retry. Adapters: `FileInbox` (`.data/events.jsonl`) and `InMemoryInbox`. _Avoid_: dedupe store, event log.
 
 **Effective scopes**: What an API key can actually do: the platform's `approvedScopes` ∩ the key's `activeScopes`. The
-business grant narrows it further on the server, which the client can't see. Exposed as `platform().can(scope)`.
+business grant narrows it further on the server, which the client can't see. Exposed as `getPlatformIdentity().can(scope)`.
 _Avoid_: permissions, active scopes (that's only the key's half).
 
 **Platform identity**: The normalized result of `GET /v1/platform/me`: `platformId`, `environment`, `status` and effective scopes.

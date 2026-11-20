@@ -55,8 +55,8 @@ function saveState(s: { businessId?: string }) {
 
 async function main() {
   step(1, 'Platform identity (GET /v1/platform/me)');
-  const identity = await platform.platform();
-  ok(`platform ${identity.platformId} (${identity.status}) env=${identity.environment}`, { effectiveScopes: [...identity.scopes] });
+  const identity = await platform.getPlatformIdentity();
+  ok(`platform ${identity.platformId} (${identity.status}) env=${identity.environment}`, { effectiveScopes: [...identity.effectiveScopes] });
   if (identity.unapprovedKeyScopes.length) warn(`key has scopes the platform hasn't approved: ${identity.unapprovedKeyScopes.join(', ')}`);
   const missing = WANTED_SCOPES.filter(s => !identity.can(s));
   if (missing.length) warn(`key lacks scopes: ${missing.join(', ')} - some steps may 403`);
@@ -82,7 +82,7 @@ async function main() {
 
   step(3, 'Readiness (GET /v1/platform/business/readiness)');
   try {
-    const r = await biz.readiness();
+    const r = await biz.getReadiness();
     ok(`ready=${r.ready}`, r.steps);
     if (!r.ready) warn('business not fully ready (KYB etc.) - continuing, test invoices may still work');
   } catch (e) {

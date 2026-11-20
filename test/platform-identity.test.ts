@@ -21,27 +21,27 @@ const REAL_ME = {
 
 describe('Platform identity', () => {
   it('normalizes the real /me shape', async () => {
-    const p = await clientReturning(REAL_ME).platform();
+    const p = await clientReturning(REAL_ME).getPlatformIdentity();
     assert.equal(p.platformId, 'plat-1');
     assert.equal(p.environment, 'test');
     assert.equal(p.status, 'pending');
   });
 
   it('effective scopes = approved ∩ key scopes', async () => {
-    const p = await clientReturning(REAL_ME).platform();
-    assert.deepEqual([...p.scopes].sort(), ['invoice:create', 'platform:read']);
+    const p = await clientReturning(REAL_ME).getPlatformIdentity();
+    assert.deepEqual([...p.effectiveScopes].sort(), ['invoice:create', 'platform:read']);
     assert.ok(p.can('invoice:create'));
     assert.ok(!p.can('invoice:send'), 'approved but not on the key');
     assert.ok(!p.can('campaign:create'), 'on the key but not approved');
   });
 
   it('falls back to the documented top-level activeScopes', async () => {
-    const p = await clientReturning({ platformId: 'x', keyInfo: { environment: 'test' }, activeScopes: ['platform:read'] }).platform();
+    const p = await clientReturning({ platformId: 'x', keyInfo: { environment: 'test' }, activeScopes: ['platform:read'] }).getPlatformIdentity();
     assert.ok(p.can('platform:read'));
   });
 
   it('refuses a live environment even with a test-prefixed key', async () => {
-    await assert.rejects(clientReturning({ ...REAL_ME, keyInfo: { ...REAL_ME.keyInfo, environment: 'live' } }).platform(), /live/);
+    await assert.rejects(clientReturning({ ...REAL_ME, keyInfo: { ...REAL_ME.keyInfo, environment: 'live' } }).getPlatformIdentity(), /live/);
   });
 });
 

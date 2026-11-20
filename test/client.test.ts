@@ -30,7 +30,7 @@ describe('OncadeClient', () => {
   it('generates an idempotency key for mutating calls only', async () => {
     const f = fakeFetch(200, {});
     const c = new OncadeClient({ apiKey: 'oncade_platform_test_k', baseUrl: 'https://h/api', fetchImpl: f.impl });
-    await c.me();
+    await c.getInvoice('inv_1');
     await c.cancelInvoice('inv_1');
     assert.equal((f.calls[0]!.init.headers as Record<string, string>)['Idempotency-Key'], undefined);
     assert.match((f.calls[1]!.init.headers as Record<string, string>)['Idempotency-Key']!, /^[0-9a-f-]{36}$/);

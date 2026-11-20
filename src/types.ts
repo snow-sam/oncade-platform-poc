@@ -20,7 +20,7 @@ export interface PlatformIdentity {
   environment: 'test' | 'live';
   status?: string;
   /** Effective scopes: approvedScopes ∩ key activeScopes. */
-  scopes: ReadonlySet<string>;
+  effectiveScopes: ReadonlySet<string>;
   /** Scopes on the key that the platform hasn't approved (FEEDBACK #13). */
   unapprovedKeyScopes: string[];
   can(scope: string): boolean;

@@ -23,7 +23,7 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 | `src/invoice-lifecycle.ts` | **Invoice lifecycle** module: `issue()`, `send()` and `cancel()` each return a **Confirmation** (API read-back + webhook `received`/`timeout`/`skipped`); a state mismatch throws |
 | `src/webhook-inbox.ts` | **Webhook inbox**: stores each verified delivery exactly once (`record` → new/duplicate, marked seen only after a successful write) and serves stored deliveries as an Event source. Adapters: `FileInbox` and `InMemoryInbox`, both run against one contract suite |
 | `src/event-source.ts` | **Event source** interface: the read side the Invoice lifecycle depends on |
-| `src/client.ts` | Typed client: auth, API version, `X-Target-Business-Id`, automatic UUID `Idempotency-Key` on POST/PUT/PATCH, typed errors, redacted debug logging. `platform()` normalizes `/me` into **Platform identity** with `can(scope)`. The constructor refuses non-test keys |
+| `src/client.ts` | Typed client: auth, API version, `X-Target-Business-Id`, automatic UUID `Idempotency-Key` on POST/PUT/PATCH, typed errors, redacted debug logging. `getPlatformIdentity()` normalizes `/me` into **Platform identity** with `can(scope)`. The constructor refuses non-test keys |
 | `src/webhooks.ts` | HMAC-SHA256 verification over the **raw body** with a constant-time compare. The http handler stores first and reacts later: 401 bad sig, 400 bad JSON, 200 once stored or duplicate, 500 only if storing fails (so Oncade retries); `afterRecord` runs after the response |
 | `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), stores deliveries in a `FileInbox` (`.data/events.jsonl`); `/health` identifies itself |
 | `src/flow.ts` | The end-to-end demo, presentation only. It provisions the business, checks whether the receiver is up, and prints each Confirmation |
@@ -117,7 +117,7 @@ Most of the AI's mistakes came from trusting the docs. The live run caught each 
 what stays out of the module, and the test strategy. The decisions went into a GitHub issue. The implementation was test-first:
 red, then green, at the module interfaces. It was verified live on both paths (receiver up: all webhooks `received`;
 receiver down: `skipped`, still confirmed by the API). Result: the most fragile logic moved out of an untested script into
-the Invoice lifecycle module, which has 10 interface tests. The `/me` drift now lives in one place (`client.platform()`), and a
+the Invoice lifecycle module, which has 10 interface tests. The `/me` drift now lives in one place (`client.getPlatformIdentity()`), and a
 docs-driven helper (`payloadMentions`) was deleted.
 **Second architecture pass ([#2](https://github.com/snow-sam/oncade-platform-poc/issues/2)).** Re-reading the webhook
 code for candidate #3 surfaced a real bug that the original tests missed. The handler marked a delivery as seen *before*
