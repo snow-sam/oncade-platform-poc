@@ -82,9 +82,10 @@ invoice webhooks arrived signed, and HMAC verification passed on the first try. 
   only has platform, business and invoice scopes. The docs say business scopes are auto-approved in test, and `pendingScopes` is
   `[]`, so nothing tells you how to get the rest approved or why they weren't. The platform's own `status` is `"pending"`, and that
   isn't explained either.
-- **Related:** My first key didn't include `platform:read`, so even `GET /me` returned 403. The error message was clear
-  (`API key does not have required scope: platform:read`), but `/me` is the first call every guide makes. Making that scope
-  default or required on key creation would remove this first stumble.
+- **Related:** The key creation form starts with **no scopes selected**, and nothing marks `platform:read` as needed. My
+  first key didn't include it, so even `GET /me`, the first call every guide makes, returned 403. The error message was clear
+  (`API key does not have required scope: platform:read`). Pre-selecting `platform:read`, or the scopes a guide needs,
+  would remove this first stumble.
 
 ### 14. [Confusing] Invoice webhook payloads differ from the docs (in a good way)
 - **Where:** `Platform.Invoice.Created`, `.Sent` and `.Cancelled` deliveries
