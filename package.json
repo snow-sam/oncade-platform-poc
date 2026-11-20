@@ -1,0 +1,24 @@
+{
+  "name": "oncade-platform-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript proof of concept for the Oncade Platform API: business + invoice lifecycle with signed webhooks (test environment).",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "webhooks": "tsx --env-file=.env src/server.ts",
+    "flow": "tsx --env-file=.env src/flow.ts",
+    "whoami": "tsx --env-file=.env src/whoami.ts",
+    "webhook:selftest": "tsx --env-file=.env src/selftest.ts",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
