@@ -35,9 +35,11 @@ When the guide and the reference disagree, trust **actual API responses**, then 
 - `npm run typecheck && npm test` must pass before committing.
 
 ## Layout
-- `src/client.ts` typed API client · `src/webhooks.ts` signature verification + http handler
-- `src/server.ts` webhook receiver · `src/flow.ts` end-to-end demo · `src/eventlog.ts` file-backed event log shared
-  between the two processes · `test/` node:test suites
+- `src/invoice-lifecycle.ts` Invoice lifecycle module (issue/send/cancel → Confirmation) · `src/event-source.ts` Event source
+  interface + in-memory adapter · `src/eventlog.ts` file event log + FileEventSource adapter
+- `src/client.ts` typed API client + `platform()` (Platform identity) + live-key guard · `src/webhooks.ts` signature
+  verification + http handler · `src/server.ts` webhook receiver · `src/flow.ts` demo, presentation only
+- `test/` node:test suites at module interfaces. Terms: `GLOSSARY.md`.
 
 ## Agent skills
 

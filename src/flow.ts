@@ -1,25 +1,25 @@
 /**
- * End-to-end invoice flow against the Oncade test environment:
+ * End-to-end demo against the Oncade test environment. Presentation only: the Invoice lifecycle module
+ * (src/invoice-lifecycle.ts) does the confirming.
  *
- *   1. GET  /v1/platform/me                       verify key, read approved scopes
- *   2. POST /v1/platform/business                 create a business + auto-grant our platform (or reuse one)
- *   3. GET  /v1/platform/business/readiness       payout wallet / address / KYB status
- *   4. POST /v1/platform/invoices                 create a draft invoice      -> Platform.Invoice.Created
- *   5. POST /v1/platform/invoices/:id/send        send it                     -> Platform.Invoice.Sent
- *   6. GET  /v1/platform/invoices/:id             confirm state from the API (source of truth)
- *   7. POST /v1/platform/invoices/:id/cancel      clean up (skip with --keep) -> Platform.Invoice.Cancelled
+ *   1. Platform identity      GET  /v1/platform/me
+ *   2. Business               POST /v1/platform/business (or reuse one from .data/state.json)
+ *   3. Readiness              GET  /v1/platform/business/readiness
+ *   4. issue()                POST /v1/platform/invoices            -> Platform.Invoice.Created
+ *   5. send()                 POST /v1/platform/invoices/:id/send   -> Platform.Invoice.Sent
+ *   6. cancel() (or --keep)   POST /v1/platform/invoices/:id/cancel -> Platform.Invoice.Cancelled
  *
- * Webhooks are received by `npm run webhooks` (separate process) and read back here from .data/events.jsonl.
+ * Webhooks are received by `npm run webhooks` (separate process). If it isn't running, webhook waits are skipped.
  *
  * Usage: npm run flow [-- --keep] [-- --new-business]
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { OncadeApiError, OncadeClient } from './client.ts';
+import { OncadeClient } from './client.ts';
 import { loadConfig } from './config.ts';
-import { DATA_DIR, readEvents, waitForEvent } from './eventlog.ts';
-import { payloadMentions } from './webhooks.ts';
+import { DATA_DIR, FileEventSource } from './eventlog.ts';
+import { type Confirmation, InvoiceLifecycle, InvoiceLifecycleError } from './invoice-lifecycle.ts';
 
 const args = new Set(process.argv.slice(2));
 const KEEP = args.has('--keep');
@@ -38,6 +38,13 @@ function step(n: number, msg: string) { console.log(`\n[${n}] ${msg}`); }
 function ok(msg: string, extra?: unknown) { console.log(`    ✓ ${msg}`, extra ?? ''); }
 function warn(msg: string) { console.log(`    ! ${msg}`); }
 
+function report({ invoice, webhook }: Confirmation, eventName: string) {
+  ok(`API confirms ${invoice._id} status=${invoice.status}`);
+  if (webhook.status === 'received') ok(`webhook ${eventName} received`, webhook.event.data);
+  else if (webhook.status === 'timeout') warn(`no ${eventName} webhook in time - is the tunnel URL set in dev.oncade.xyz Platform > Settings?`);
+  else warn(`webhook wait skipped (receiver not running)`);
+}
+
 function loadState(): { businessId?: string } {
   return existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : {};
 }
@@ -46,26 +53,10 @@ function saveState(s: { businessId?: string }) {
   writeFileSync(STATE, JSON.stringify(s, null, 2));
 }
 
-async function expectWebhook(name: string, invoiceId: string, since: Date, fallback: () => Promise<boolean>) {
-  const webhookServerUp = await fetch(`http://localhost:${cfg.webhookPort}/health`).then(r => r.ok, () => false);
-  if (!webhookServerUp) {
-    warn(`webhook receiver not running (npm run webhooks) - checking state via API instead of ${name}`);
-    if (await fallback()) ok(`API confirms state for ${name}`);
-    return;
-  }
-  // Invoice webhook payloads aren't documented, so match on the event name + our invoice id anywhere in data.
-  const hit = await waitForEvent(e => e.event === name && payloadMentions(e.data, invoiceId), { since, timeoutMs: 60_000 });
-  if (hit) return ok(`webhook ${name} received`, hit.data);
-  const sameName = readEvents().filter(e => e.event === name && new Date(e.receivedAt) >= since);
-  if (sameName.length) warn(`got ${name} but couldn't find invoice id ${invoiceId} in its data: ${JSON.stringify(sameName.at(-1)?.data)}`);
-  else warn(`no ${name} webhook within 60s - is the tunnel URL set in dev.oncade.xyz Platform > Settings?`);
-}
-
 async function main() {
-  step(1, 'Verify API key (GET /v1/platform/me)');
+  step(1, 'Platform identity (GET /v1/platform/me)');
   const identity = await platform.platform();
-  const active = [...identity.scopes];
-  ok(`platform ${identity.platformId} (${identity.status}) env=${identity.environment}`, { effectiveScopes: active });
+  ok(`platform ${identity.platformId} (${identity.status}) env=${identity.environment}`, { effectiveScopes: [...identity.scopes] });
   if (identity.unapprovedKeyScopes.length) warn(`key has scopes the platform hasn't approved: ${identity.unapprovedKeyScopes.join(', ')}`);
   const missing = WANTED_SCOPES.filter(s => !identity.can(s));
   if (missing.length) warn(`key lacks scopes: ${missing.join(', ')} - some steps may 403`);
@@ -81,7 +72,7 @@ async function main() {
       members: [{ email: cfg.businessOwnerEmail, roles: ['admin'], isOwner: true }],
       payoutWallet: cfg.payoutWallet, // invoices 400 without one
       address: { line1: '1 Test Street', city: 'Austin', state: 'TX', postalCode: '78701', country: 'US' },
-      grantScopes: WANTED_SCOPES.filter(s => active.includes(s)),
+      grantScopes: WANTED_SCOPES.filter(s => identity.can(s)),
     });
     businessId = created.business._id;
     saveState({ businessId });
@@ -98,16 +89,20 @@ async function main() {
     warn(`readiness failed: ${(e as Error).message}`);
   }
 
-  step(4, 'Create draft invoice (POST /v1/platform/invoices)');
-  const runId = randomUUID();
+  // Whether the receiver runs is about how this demo is wired, not about the lifecycle: decide here.
+  // Check the body, not just 200: another local app on the same port once passed a status-only check.
+  const receiverUp = await fetch(`http://localhost:${cfg.webhookPort}/health`)
+    .then(async r => r.ok && (await r.text()) === 'oncade-platform-poc/webhooks', () => false);
+  if (!receiverUp) warn('webhook receiver not running (npm run webhooks) - confirming via API only');
+  const lifecycle = new InvoiceLifecycle(biz, { events: receiverUp ? new FileEventSource() : undefined });
+
+  step(4, 'issue() - draft invoice');
   const today = new Date();
-  const due = new Date(today.getTime() + 30 * 86_400_000);
-  const t0 = new Date(Date.now() - 2000);
-  const invoice = await biz.createInvoice({
+  const issued = await lifecycle.issue({
     receiverName: 'PoC Customer',
     receiverEmail: cfg.invoiceReceiverEmail,
     date: today.toISOString(),
-    dueDate: due.toISOString(),
+    dueDate: new Date(today.getTime() + 30 * 86_400_000).toISOString(),
     payToTarget: 'BUSINESS',
     items: [
       { description: 'Integration consulting (hours)', quantity: 2, rate: 25, amount: 50 },
@@ -115,48 +110,30 @@ async function main() {
     ],
     total: 60,
     note: 'Created by oncade-platform-poc',
-    externalMetadata: { source: 'oncade-platform-poc', runId },
-    status: 'draft',
-  }, runId); // API rejects non-UUID Idempotency-Keys (undocumented)
-  ok(`invoice ${invoice._id} status=${invoice.status}`, {
-    invoiceNumber: invoice.invoiceNumber, paymentSummary: invoice.paymentSummary, link: invoice.links?.invoice,
+    externalMetadata: { source: 'oncade-platform-poc', runId: randomUUID() },
   });
-  await expectWebhook('Platform.Invoice.Created', invoice._id, t0,
-    async () => (await biz.getInvoice(invoice._id)).status === 'draft');
+  const id = issued.invoice._id;
+  ok(`invoice ${issued.invoice.invoiceNumber}`, { paymentSummary: issued.invoice.paymentSummary, link: issued.invoice.links?.invoice });
+  report(issued, 'Platform.Invoice.Created');
 
-  step(5, `Send invoice (POST /v1/platform/invoices/:id/send, sendEmail=${cfg.sendInvoiceEmail})`);
-  const t1 = new Date(Date.now() - 2000);
-  const sent = await biz.sendInvoice(invoice._id, { sendEmail: cfg.sendInvoiceEmail });
-  ok(`status=${sent.status} emailSuppressed=${sent.emailSuppressed}`);
-  await expectWebhook('Platform.Invoice.Sent', invoice._id, t1,
-    async () => (await biz.getInvoice(invoice._id)).status === 'sent');
-
-  step(6, 'Read back (GET /v1/platform/invoices/:id)');
-  const fresh = await biz.getInvoice(invoice._id);
-  ok(`status=${fresh.status}`, { externalMetadata: fresh.externalMetadata, link: fresh.links?.invoice });
+  step(5, `send() - sendEmail=${cfg.sendInvoiceEmail}`);
+  report(await lifecycle.send(id, { sendEmail: cfg.sendInvoiceEmail }), 'Platform.Invoice.Sent');
 
   if (KEEP) {
-    console.log(`\n--keep: leaving invoice in "${fresh.status}". Pay it at ${fresh.links?.invoice ?? '(no link)'} and watch for Platform.Invoice.Paid in the webhook terminal.`);
+    console.log(`\n--keep: leaving invoice "sent". Pay it at ${issued.invoice.links?.invoice ?? '(no link)'} and watch for Platform.Invoice.Paid in the webhook terminal.`);
     return;
   }
 
-  step(7, 'Cancel (POST /v1/platform/invoices/:id/cancel)');
-  const t2 = new Date(Date.now() - 2000);
-  const cancelled = await biz.cancelInvoice(invoice._id);
-  ok(`status=${cancelled.status}`);
-  await expectWebhook('Platform.Invoice.Cancelled', invoice._id, t2,
-    async () => (await biz.getInvoice(invoice._id)).status === 'cancelled');
+  step(6, 'cancel()');
+  report(await lifecycle.cancel(id), 'Platform.Invoice.Cancelled');
 
-  console.log('\nDone: draft -> sent -> cancelled, with webhooks.');
+  console.log('\nDone: draft -> sent -> cancelled, each confirmed by the API.');
 }
 
 main().catch(err => {
-  if (err instanceof OncadeApiError) {
-    console.error(`\n✗ API error: ${err.message}`);
-    if (err.status === 401) console.error('  Check ONCADE_API_KEY.');
-    if (err.status === 403) console.error('  Missing scope or grant - check the key scopes in dev.oncade.xyz.');
-  } else {
-    console.error('\n✗', err);
-  }
+  console.error(`\n✗ ${err instanceof Error ? err.message : err}`);
+  const status = (err instanceof InvoiceLifecycleError ? (err.cause as { status?: number } | undefined) : (err as { status?: number }))?.status;
+  if (status === 401) console.error('  Check ONCADE_API_KEY.');
+  if (status === 403) console.error('  Missing scope or grant - check the key scopes in dev.oncade.xyz.');
   process.exit(1);
 });

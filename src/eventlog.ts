@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import type { EventSource } from './event-source.ts';
 import type { WebhookEvent } from './types.ts';
 import type { DedupeStore } from './webhooks.ts';
 
@@ -8,21 +9,21 @@ import type { DedupeStore } from './webhooks.ts';
  * (they run as separate processes). A real integration would use a database/queue.
  */
 export const DATA_DIR = resolve('.data');
-const EVENTS = resolve(DATA_DIR, 'events.jsonl');
+export const EVENTS_FILE = resolve(DATA_DIR, 'events.jsonl');
 
 export interface LoggedEvent extends WebhookEvent {
   receivedAt: string;
   deliveryKey: string;
 }
 
-export function appendEvent(e: LoggedEvent) {
-  mkdirSync(dirname(EVENTS), { recursive: true });
-  appendFileSync(EVENTS, JSON.stringify(e) + '\n');
+export function appendEvent(e: LoggedEvent, file = EVENTS_FILE) {
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, JSON.stringify(e) + '\n');
 }
 
-export function readEvents(): LoggedEvent[] {
-  if (!existsSync(EVENTS)) return [];
-  return readFileSync(EVENTS, 'utf8').split('\n').filter(Boolean).flatMap(l => {
+export function readEvents(file = EVENTS_FILE): LoggedEvent[] {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8').split('\n').filter(Boolean).flatMap(l => {
     try { return [JSON.parse(l) as LoggedEvent]; } catch { return []; }
   });
 }
@@ -37,15 +38,21 @@ export class FileDedupeStore implements DedupeStore {
   }
 }
 
-export async function waitForEvent(
-  match: (e: LoggedEvent) => boolean,
-  { timeoutMs = 60_000, since = new Date(0) }: { timeoutMs?: number; since?: Date } = {},
-): Promise<LoggedEvent | undefined> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const hit = readEvents().find(e => new Date(e.receivedAt) >= since && match(e));
-    if (hit) return hit;
-    await new Promise(r => setTimeout(r, 1000));
+/**
+ * Event source adapter over the receiver's log file. The receiver is a separate process, so this polls the file.
+ * Events already in the log count if they were received at or after `since` (the Event source contract).
+ */
+export class FileEventSource implements EventSource {
+  constructor(private readonly file = EVENTS_FILE, private readonly pollMs = 500) {}
+
+  async waitFor(match: (e: WebhookEvent) => boolean, { since, timeoutMs }: { since: Date; timeoutMs: number }) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const hit = readEvents(this.file).find(e => new Date(e.receivedAt) >= since && match(e));
+      if (hit) return hit;
+      const left = deadline - Date.now();
+      if (left <= 0) return undefined;
+      await new Promise(r => setTimeout(r, Math.min(this.pollMs, left)));
+    }
   }
-  return undefined;
 }

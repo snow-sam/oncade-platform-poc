@@ -5,6 +5,7 @@ import { createWebhookHandler } from './webhooks.ts';
 import type { WebhookEvent } from './types.ts';
 
 const cfg = loadConfig({ webhooks: true });
+const RECEIVER_ID = 'oncade-platform-poc/webhooks';
 
 /** Business reactions to events. Kept deliberately small - logging + the shared event log. */
 function handle(event: WebhookEvent) {
@@ -43,7 +44,7 @@ const handler = createWebhookHandler({
 });
 
 createServer((req, res) => {
-  if (req.url === '/health') return void res.writeHead(200).end('ok');
+  if (req.url === '/health') return void res.writeHead(200).end(RECEIVER_ID); // identifies this receiver, not just any app on the port
   if (req.url?.split('?')[0] === '/webhooks/oncade') return void handler(req, res);
   res.writeHead(404).end();
 }).listen(cfg.webhookPort, () => {

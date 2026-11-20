@@ -109,11 +109,3 @@ export function createWebhookHandler(opts: WebhookHandlerOptions) {
     return reply(res, 200, { ok: true });
   };
 }
-
-/** Find a string anywhere inside a payload - invoice webhooks don't document their data shape. */
-export function payloadMentions(value: unknown, needle: string): boolean {
-  if (value == null) return false;
-  if (typeof value === 'string') return value === needle;
-  if (typeof value !== 'object') return false;
-  return Object.values(value as Record<string, unknown>).some(v => payloadMentions(v, needle));
-}

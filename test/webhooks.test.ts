@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { createWebhookHandler, payloadMentions, sign, verifySignature } from '../src/webhooks.ts';
+import { createWebhookHandler, sign, verifySignature } from '../src/webhooks.ts';
 import type { WebhookEvent } from '../src/types.ts';
 
 const SECRET = 'whsec_test_123';
@@ -19,11 +19,6 @@ describe('verifySignature', () => {
     const reformatted = Buffer.from(JSON.stringify(JSON.parse(body.toString()), null, 2));
     assert.ok(!verifySignature(reformatted, sign(body, SECRET), SECRET));
   });
-});
-
-describe('payloadMentions', () => {
-  it('finds nested ids', () => assert.ok(payloadMentions({ a: { b: ['x', { id: 'inv_9' }] } }, 'inv_9')));
-  it('ignores partial matches', () => assert.ok(!payloadMentions({ id: 'inv_99' }, 'inv_9')));
 });
 
 describe('webhook handler', () => {

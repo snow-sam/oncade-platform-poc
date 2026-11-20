@@ -20,14 +20,17 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 
 | File | What |
 |---|---|
-| `src/client.ts` | Typed client: auth, API version, `X-Target-Business-Id`, automatic `Idempotency-Key` on POST/PUT/PATCH, typed errors, redacted debug logging |
+| `src/invoice-lifecycle.ts` | **Invoice lifecycle** module: `issue()`, `send()` and `cancel()` each return a **Confirmation** (API read-back + webhook `received`/`timeout`/`skipped`); a state mismatch throws |
+| `src/event-source.ts` | **Event source** interface + in-memory adapter; the file adapter is in `src/eventlog.ts` |
+| `src/client.ts` | Typed client: auth, API version, `X-Target-Business-Id`, automatic UUID `Idempotency-Key` on POST/PUT/PATCH, typed errors, redacted debug logging. `platform()` normalizes `/me` into **Platform identity** with `can(scope)`. The constructor refuses non-test keys |
 | `src/webhooks.ts` | HMAC-SHA256 verification over the **raw body** with a constant-time compare; http handler (401 bad sig, 400 bad JSON, 200 on duplicate, 500 on handler error so Oncade retries) |
-| `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), writes events to `.data/events.jsonl` |
-| `src/flow.ts` | The end-to-end run above. It waits for each webhook and falls back to polling the API if the receiver isn't running |
+| `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), writes events to `.data/events.jsonl`; `/health` identifies itself |
+| `src/flow.ts` | The end-to-end demo, presentation only. It provisions the business, checks whether the receiver is up, and prints each Confirmation |
 | `src/idempotency-check.ts` | Sends the same `Idempotency-Key` three times to see whether the API dedupes. Found FEEDBACK #10 |
 | `src/tunnel.ts` | Starts a `cloudflared` quick tunnel on `WEBHOOK_PORT` and prints the URL to paste in the portal |
 | `src/selftest.ts` | Sends valid, replayed, wrong-secret and unsigned deliveries to the local receiver |
-| `test/` | `node:test` suites for signature verification, the handler and the client headers |
+| `test/` | `node:test` suites at module interfaces: Invoice lifecycle (fake Oncade behind the fetch seam + in-memory Event source), Event source adapters, Platform identity, webhook verification and handler, client headers |
+| `GLOSSARY.md` | Domain terms used in code and issues |
 | `FEEDBACK.md` | Part 2 feedback: doc bugs and confusion found while building |
 | `CLAUDE.md` | The context file the AI agent worked from: API facts, verified deviations from the docs, guardrails, and agent skills config |
 | `docs/agents/` | Agent skill configuration: issue tracker (GitHub), triage labels, domain-docs layout |
@@ -104,6 +107,17 @@ Most of the AI's mistakes came from trusting the docs. The live run caught each 
   invoice id anywhere in the payload. The real payload has a plain `invoiceId`. Harmless, but more complicated than needed.
 - **Port 3000 default** clashed with another local app. Moved to 3001 and made the tunnel follow `WEBHOOK_PORT`.
 - **What it got right:** HMAC verification over the raw body worked on the first live delivery.
+
+**Architecture pass ([#1](https://github.com/snow-sam/oncade-platform-poc/issues/1)).** After the PoC worked, I ran the
+`improve-codebase-architecture` skill. It produced an HTML report with four deepening candidates. I picked the top one, and a
+`grilling` session settled 15 design decisions before any code was written: what counts as confirmed, where the seams go,
+what stays out of the module, and the test strategy. The decisions went into a GitHub issue. The implementation was test-first:
+red, then green, at the module interfaces. It was verified live on both paths (receiver up: all webhooks `received`;
+receiver down: `skipped`, still confirmed by the API). Result: the most fragile logic moved out of an untested script into
+the Invoice lifecycle module, which has 10 interface tests. The `/me` drift now lives in one place (`client.platform()`), and a
+docs-driven helper (`payloadMentions`) was deleted.
+One more AI slip, caught during that live check: to simulate "receiver down" it picked port 3999, where another local app
+answered 200 on `/health`, so the flow treated it as the receiver. The fix was making `/health` identify itself rather than trusting any 200.
 
 Tooling friction: Claude Code's auto-mode guardrail blocked the agent from creating a *public* GitHub repo on my account.
 I ran that one command myself, which is a reasonable default. Two environment issues on Windows: it couldn't render the Part 1
