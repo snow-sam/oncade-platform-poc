@@ -237,7 +237,11 @@ once each in `.data/events.jsonl` (about 1s apart), and were matched by `invoice
 No changes were needed.
 
 `npm run idempotency:check`: the same `Idempotency-Key` sent 3× created **3 invoices**, so the key isn't enforced (see FEEDBACK #10).
-`npm run webhook:selftest`: valid → 200, replay → 200 duplicate, wrong secret → 401, unsigned → 401.
+It reproduced on a second run after all four passes (2026-11-19): `…6153`, `…6161`, `…616f`, including the call with a
+different body. The script cancels its probe invoices, and all three were confirmed `cancelled`.
+
+`npm run webhook:selftest` (re-run after the passes, against the restarted receiver): valid → 200, replay → 200 duplicate,
+wrong secret → 401, unsigned → 401.
 
 Not covered: `Platform.Invoice.Paid`. Paying needs ACH on the hosted page. `npm run flow -- --keep` leaves an invoice in
 `sent` and prints the pay link if you want to try it.

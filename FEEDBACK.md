@@ -64,7 +64,7 @@ invoice webhooks arrived signed, and HMAC verification passed on the first try. 
 - **Where:** `POST /v1/platform/invoices` (reproduce with `npm run idempotency:check`)
 - **What I did:** Sent the same UUID `Idempotency-Key` three times: twice with the same body, once with a different body.
 - **Expected:** The 2nd call returns the original invoice. The 3rd call gets a 409/422 for key reuse with a different payload.
-- **What happened:** All three calls returned 201, and **three different invoices** were created (`…5c7e`, `…5c8c`, `…5c9a`).
+- **What happened:** All three calls returned 201, and **three different invoices** were created (`…5c7e`, `…5c8c`, `…5c9a`). It reproduced on a second run later the same day (`…6153`, `…6161`, `…616f`).
   Getting-started tells integrators to send the header on every POST/PUT/PATCH, so they'll rely on it. A client that
   retries after a timeout will double-bill the payer.
 
