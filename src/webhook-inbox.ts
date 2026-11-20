@@ -23,7 +23,13 @@ export interface StoredEvent extends WebhookEvent {
   deliveryKey: string;
 }
 
-const keyOf = (rawBody: Buffer) => createHash('sha256').update(rawBody).digest('hex');
+type EventMatcher = (event: WebhookEvent) => boolean;
+
+const deliveryKeyOf = (rawBody: Buffer) => createHash('sha256').update(rawBody).digest('hex');
+
+/** The first stored event that matches and was received at or after `since`. */
+const findReceivedSince = (stored: StoredEvent[], match: EventMatcher, since: Date) =>
+  stored.find(event => new Date(event.receivedAt) >= since && match(event));
 
 export class InMemoryInbox implements WebhookInbox {
   private stored: StoredEvent[] = [];
@@ -31,12 +37,12 @@ export class InMemoryInbox implements WebhookInbox {
   private waiters = new Set<() => void>();
   private readonly now: () => Date;
 
-  constructor(opts: { now?: () => Date } = {}) {
-    this.now = opts.now ?? (() => new Date());
+  constructor(options: { now?: () => Date } = {}) {
+    this.now = options.now ?? (() => new Date());
   }
 
   async record(rawBody: Buffer, event: WebhookEvent): Promise<RecordResult> {
-    const deliveryKey = keyOf(rawBody);
+    const deliveryKey = deliveryKeyOf(rawBody);
     if (this.seen.has(deliveryKey)) return 'duplicate';
     this.stored.push({ ...event, receivedAt: this.now().toISOString(), deliveryKey });
     this.seen.add(deliveryKey); // only after storing
@@ -44,17 +50,18 @@ export class InMemoryInbox implements WebhookInbox {
     return 'new';
   }
 
-  waitFor(match: (e: WebhookEvent) => boolean, { since, timeoutMs }: { since: Date; timeoutMs: number }) {
-    const find = () => this.stored.find(e => new Date(e.receivedAt) >= since && match(e));
+  waitFor(match: EventMatcher, { since, timeoutMs }: { since: Date; timeoutMs: number }) {
     return new Promise<WebhookEvent | undefined>(resolve => {
-      const done = (hit: WebhookEvent | undefined) => { clearTimeout(timer); this.waiters.delete(check); resolve(hit); };
-      const check = () => { const hit = find(); if (hit) done(hit); };
-      const timer = setTimeout(() => done(undefined), timeoutMs);
+      const finish = (result: WebhookEvent | undefined) => { clearTimeout(timer); this.waiters.delete(check); resolve(result); };
+      const check = () => { const found = findReceivedSince(this.stored, match, since); if (found) finish(found); };
+      const timer = setTimeout(() => finish(undefined), timeoutMs);
       this.waiters.add(check);
       check();
     });
   }
 }
+
+const DEFAULT_POLL_MS = 500;
 
 /**
  * Append-only JSONL file. The receiver process writes it, and other processes (the flow) read it by polling.
@@ -67,15 +74,15 @@ export class FileInbox implements WebhookInbox {
   private readonly pollMs: number;
   private readonly seen: Set<string>;
 
-  constructor(opts: { file: string; now?: () => Date; pollMs?: number }) {
-    this.file = opts.file;
-    this.now = opts.now ?? (() => new Date());
-    this.pollMs = opts.pollMs ?? 500;
-    this.seen = new Set(this.read().map(e => e.deliveryKey));
+  constructor(options: { file: string; now?: () => Date; pollMs?: number }) {
+    this.file = options.file;
+    this.now = options.now ?? (() => new Date());
+    this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
+    this.seen = new Set(this.readAll().map(event => event.deliveryKey));
   }
 
   async record(rawBody: Buffer, event: WebhookEvent): Promise<RecordResult> {
-    const deliveryKey = keyOf(rawBody);
+    const deliveryKey = deliveryKeyOf(rawBody);
     if (this.seen.has(deliveryKey)) return 'duplicate';
     const line: StoredEvent = { ...event, receivedAt: this.now().toISOString(), deliveryKey };
     mkdirSync(dirname(this.file), { recursive: true });
@@ -84,23 +91,24 @@ export class FileInbox implements WebhookInbox {
     return 'new';
   }
 
-  async waitFor(match: (e: WebhookEvent) => boolean, { since, timeoutMs }: { since: Date; timeoutMs: number }) {
+  async waitFor(match: EventMatcher, { since, timeoutMs }: { since: Date; timeoutMs: number }) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const hit = this.read().find(e => new Date(e.receivedAt) >= since && match(e));
-      if (hit) return hit;
-      const left = deadline - Date.now();
-      if (left <= 0) return undefined;
-      await new Promise(r => setTimeout(r, Math.min(this.pollMs, left)));
+      const found = findReceivedSince(this.readAll(), match, since);
+      if (found) return found;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return undefined;
+      await new Promise(wake => setTimeout(wake, Math.min(this.pollMs, remainingMs)));
     }
   }
 
-  private read(): StoredEvent[] {
+  /** Every stored delivery. A missing or unreadable file reads as empty; unparsable lines are skipped. */
+  private readAll(): StoredEvent[] {
     if (!existsSync(this.file)) return [];
     let text: string;
     try { text = readFileSync(this.file, 'utf8'); } catch { return []; }
-    return text.split('\n').filter(Boolean).flatMap(l => {
-      try { return [JSON.parse(l) as StoredEvent]; } catch { return []; }
+    return text.split('\n').filter(Boolean).flatMap(line => {
+      try { return [JSON.parse(line) as StoredEvent]; } catch { return []; }
     });
   }
 }
