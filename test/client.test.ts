@@ -29,7 +29,7 @@ describe('OncadeClient', () => {
 
   it('generates an idempotency key for mutating calls only', async () => {
     const f = fakeFetch(200, {});
-    const c = new OncadeClient({ apiKey: 'k', baseUrl: 'https://h/api', fetchImpl: f.impl });
+    const c = new OncadeClient({ apiKey: 'oncade_platform_test_k', baseUrl: 'https://h/api', fetchImpl: f.impl });
     await c.me();
     await c.cancelInvoice('inv_1');
     assert.equal((f.calls[0]!.init.headers as Record<string, string>)['Idempotency-Key'], undefined);
@@ -38,14 +38,14 @@ describe('OncadeClient', () => {
 
   it('rejects non-UUID idempotency keys before calling the API', async () => {
     const f = fakeFetch(201, {});
-    const c = new OncadeClient({ apiKey: 'k', baseUrl: 'https://h/api', fetchImpl: f.impl });
+    const c = new OncadeClient({ apiKey: 'oncade_platform_test_k', baseUrl: 'https://h/api', fetchImpl: f.impl });
     await assert.rejects(c.createInvoice({ date: 'd', payToTarget: 'BUSINESS', items: [] }, 'invoice-123'), TypeError);
     assert.equal(f.calls.length, 0);
   });
 
   it('throws OncadeApiError with the response body', async () => {
     const f = fakeFetch(400, { error: 'metadata not allowed' });
-    const c = new OncadeClient({ apiKey: 'k', baseUrl: 'https://h/api', fetchImpl: f.impl });
+    const c = new OncadeClient({ apiKey: 'oncade_platform_test_k', baseUrl: 'https://h/api', fetchImpl: f.impl });
     await assert.rejects(c.getInvoice('x'), (e: unknown) =>
       e instanceof OncadeApiError && e.status === 400 && (e.body as { error: string }).error === 'metadata not allowed');
   });

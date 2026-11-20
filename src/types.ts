@@ -14,6 +14,18 @@ export interface MeResponse {
   [k: string]: unknown;
 }
 
+/** Normalized result of GET /me. See GLOSSARY.md: Platform identity, Effective scopes. */
+export interface PlatformIdentity {
+  platformId: string;
+  environment: 'test' | 'live';
+  status?: string;
+  /** Effective scopes: approvedScopes ∩ key activeScopes. */
+  scopes: ReadonlySet<string>;
+  /** Scopes on the key that the platform hasn't approved (FEEDBACK #13). */
+  unapprovedKeyScopes: string[];
+  can(scope: string): boolean;
+}
+
 export interface Address {
   line1: string;
   line2?: string;

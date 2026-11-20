@@ -20,10 +20,7 @@ function env(name: string, fallback?: string): string {
 
 export function loadConfig(need: { api?: boolean; webhooks?: boolean } = { api: true }): Config {
   const apiKey = need.api ? env('ONCADE_API_KEY') : env('ONCADE_API_KEY', '');
-  if (apiKey && !apiKey.startsWith('oncade_platform_test_')) {
-    // This PoC must never run against live money.
-    throw new Error('ONCADE_API_KEY is not a test key (expected prefix oncade_platform_test_). Refusing to run.');
-  }
+  // The live-key guard lives in OncadeClient's constructor, so every caller gets it.
   return {
     apiKey,
     webhookSecret: need.webhooks ? env('ONCADE_WEBHOOK_SECRET') : env('ONCADE_WEBHOOK_SECRET', ''),
