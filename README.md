@@ -149,12 +149,35 @@ The agent deliberately did *not* add a single-adapter `OncadeApi` interface just
 number and add an indirection with nothing behind it. ADR-0001 records when to revisit, and the script checks the ADR's
 conditions instead of trusting a fixed list. Run on the "before" commit, it flags exactly the two edges that were removed.
 
-A `/code-review` pass (Standards and Spec axes, run in parallel sub-agents) then caught bugs in the metrics script itself:
-- An interface extending a DTO was counted as a contract, which understated `webhook-inbox`'s distance.
-- The ADR exemption was a fixed list that never checked its own condition.
-- An n/a distance printed as `ok`.
+**Code review of the metrics pass.** The `code-review` skill reviewed the change against a fixed point (`31fe24b`).
+It ran two sub-agents in parallel so neither axis could mask the other:
+- **Standards** checked against `CLAUDE.md`, `GLOSSARY.md`, ADR-0001 and a baseline of Fowler code smells.
+- **Spec** checked against issue #3 and re-ran its acceptance criteria.
 
-They were fixed, and the table above uses the corrected script.
+`src/` had no hard violations. The useful findings were in the tool and the docs:
+
+- **Bugs in `scripts/metrics.cjs`.** The table above uses the corrected script.
+  - Any interface with `extends` counted as a contract, so `StoredEvent extends WebhookEvent` (a DTO) made
+    `webhook-inbox` look more abstract than it is. Its D_b is 0.27, not the 0.10 first reported.
+  - The ADR-0001 exemption was a fixed list. It never checked its condition ("only composition roots depend on
+    them"), so a regression would still have printed `ADR-0001`. Now a broken condition prints
+    `REVIEW (ADR-0001 void: …)`, which was checked by temporarily adding a bad import.
+  - An n/a distance printed as `ok`. `Ce` counted any relative import, not only `src/` files. Classes with no methods
+    showed LCOM4 = 0.
+- **Scope.** The agent had exempted `event-source.ts` (D_b 0.33) without asking. The Spec axis flagged it as a decision
+  that should have been confirmed. I confirmed it, and it now has its own condition: it stays exempt only while it is a
+  pure contract. The composition-root condition doesn't fit an interface that inner modules are meant to depend on.
+- **Smells (judgement calls), all fixed.**
+  - The field holding an `InvoiceApi` was still named `client`. It is now `api`.
+  - The `FileInbox` docblock named `config.ts`, restating in prose the dependency the code had just removed.
+  - The ADR didn't say why `InvoiceApi`, which also has a single adapter, is acceptable when a single-adapter
+    `OncadeApi` isn't. It now does: the first changes the direction of the dependency, the second would only move the
+    number.
+- **Left as is, on purpose.** An options bag with callback properties (`WebhookHandlerOptions`) still counts as a
+  contract. Fixing that would change `webhooks.ts`'s verdict, which needs a decision rather than a quiet fix, so it is
+  documented in the script's header.
+
+Fixes landed in a follow-up commit that references #3. Tests stayed at 42/42 and no module prints `REVIEW`.
 
 One more AI slip, caught during the first pass's live check: to simulate "receiver down" it picked port 3999, where another local app
 answered 200 on `/health`, so the flow treated it as the receiver. The fix was making `/health` identify itself rather than trusting any 200.
