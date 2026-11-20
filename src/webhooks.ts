@@ -5,13 +5,16 @@ import type { WebhookInbox } from './webhook-inbox.ts';
 
 const DEFAULT_MAX_BODY_BYTES = 1_000_000;
 
-/** `x-oncade-signature`: hex HMAC-SHA256 of the *raw* request body, keyed with the platform webhook secret. */
+/** The header Oncade puts the signature in. */
+export const SIGNATURE_HEADER = 'x-oncade-signature';
+
+/** The signature Oncade sends in SIGNATURE_HEADER: hex HMAC-SHA256 of the *raw* request body, keyed with the platform webhook secret. */
 export function computeSignature(rawBody: Buffer | string, secret: string): string {
   return createHmac('sha256', secret).update(rawBody).digest('hex');
 }
 
 /**
- * Checks `x-oncade-signature` with a constant-time compare. Must run on the exact bytes received: re-serialising
+ * Checks a SIGNATURE_HEADER value with a constant-time compare. Must run on the exact bytes received: re-serialising
  * parsed JSON changes the bytes and breaks the match.
  */
 export function verifySignature(rawBody: Buffer, signature: string | undefined, secret: string): boolean {
@@ -50,7 +53,7 @@ export function createWebhookHandler(options: WebhookHandlerOptions) {
     let rawBody: Buffer;
     try { rawBody = await readRawBody(req, maxBodyBytes); } catch { return reply(res, 413, { error: 'payload too large' }); }
 
-    const signature = firstHeader(req, 'x-oncade-signature');
+    const signature = firstHeader(req, SIGNATURE_HEADER);
     if (!verifySignature(rawBody, signature, options.secret)) {
       log(`rejected delivery: bad signature (header ${signature ? 'present' : 'missing'})`);
       return reply(res, 401, { error: 'invalid signature' });

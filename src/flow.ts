@@ -17,8 +17,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { OncadeClient } from './client.ts';
-import { EVENTS_FILE, RECEIVER_ID, STATE_FILE, loadConfig } from './config.ts';
-import { type Confirmation, InvoiceLifecycle, InvoiceLifecycleError } from './invoice-lifecycle.ts';
+import { EVENTS_FILE, HEALTH_PATH, RECEIVER_ID, STATE_FILE, loadConfig } from './config.ts';
+import { type Confirmation, INVOICE_EVENTS, type InvoiceDraft, InvoiceLifecycle, InvoiceLifecycleError } from './invoice-lifecycle.ts';
 import type { PlatformIdentity } from './types.ts';
 import { FileInbox } from './webhook-inbox.ts';
 
@@ -26,18 +26,20 @@ const args = new Set(process.argv.slice(2));
 const KEEP_INVOICE = args.has('--keep');
 const NEW_BUSINESS = args.has('--new-business');
 
-/** Scopes the flow asks a new business to grant this platform (only those the key can actually grant). */
-const GRANT_SCOPES = [
+/** Scopes the flow needs. The key is checked for them, and a new business grants the ones the key holds. */
+const FLOW_SCOPES = [
   'business:read', 'business:update',
   'invoice:create', 'invoice:read', 'invoice:update', 'invoice:send', 'invoice:cancel',
 ];
 const DAY_MS = 86_400_000;
+const INVOICE_DUE_IN_DAYS = 30;
 
 const config = loadConfig();
 const client = new OncadeClient({ apiKey: config.apiKey, baseUrl: config.baseUrl, debug: config.debug });
 
 // --- Output -----------------------------------------------------------------
-function step(n: number, message: string) { console.log(`\n[${n}] ${message}`); }
+let stepNumber = 0;
+function step(message: string) { console.log(`\n[${++stepNumber}] ${message}`); }
 function ok(message: string, details?: unknown) { console.log(`    ✓ ${message}`, details ?? ''); }
 function warn(message: string) { console.log(`    ! ${message}`); }
 
@@ -46,6 +48,11 @@ function report({ invoice, webhook }: Confirmation, eventName: string) {
   if (webhook.status === 'received') ok(`webhook ${eventName} received`, webhook.event.data);
   else if (webhook.status === 'timeout') warn(`no ${eventName} webhook in time - is the tunnel URL set in dev.oncade.xyz Platform > Settings?`);
   else warn(`webhook wait skipped (receiver not running)`);
+}
+
+/** `2026-11-19 21:45:12`: an ISO timestamp without milliseconds or zone, readable in the portal. */
+function timestampLabel(date: Date): string {
+  return date.toISOString().slice(0, 'YYYY-MM-DDTHH:mm:ss'.length).replace('T', ' ');
 }
 
 // --- Saved state ------------------------------------------------------------
@@ -61,18 +68,18 @@ function saveState(state: SavedState) {
 
 // --- Steps ------------------------------------------------------------------
 async function checkPlatformIdentity(): Promise<PlatformIdentity> {
-  step(1, 'Platform identity (GET /v1/platform/me)');
+  step('Platform identity (GET /v1/platform/me)');
   const identity = await client.getPlatformIdentity();
   ok(`platform ${identity.platformId} (${identity.status}) env=${identity.environment}`, { effectiveScopes: [...identity.effectiveScopes] });
   if (identity.unapprovedKeyScopes.length) warn(`key has scopes the platform hasn't approved: ${identity.unapprovedKeyScopes.join(', ')}`);
-  const missingScopes = GRANT_SCOPES.filter(scope => !identity.can(scope));
+  const missingScopes = FLOW_SCOPES.filter(scope => !identity.can(scope));
   if (missingScopes.length) warn(`key lacks scopes: ${missingScopes.join(', ')} - some steps may 403`);
   return identity;
 }
 
 /** Reuses the configured or saved business, or creates one (saving its id for the next run). */
 async function ensureBusiness(identity: PlatformIdentity): Promise<string> {
-  step(2, 'Business');
+  step('Business');
   const existingId = NEW_BUSINESS ? undefined : (config.businessId ?? loadState().businessId);
   if (existingId) {
     ok(`reusing business ${existingId}`);
@@ -80,11 +87,11 @@ async function ensureBusiness(identity: PlatformIdentity): Promise<string> {
   }
   if (!config.businessOwnerEmail) throw new Error('Set BUSINESS_OWNER_EMAIL in .env to create a business');
   const created = await client.createBusiness({
-    name: `PoC Business ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`,
+    name: `PoC Business ${timestampLabel(new Date())}`,
     members: [{ email: config.businessOwnerEmail, roles: ['admin'], isOwner: true }],
     payoutWallet: config.payoutWallet, // invoices 400 without one
     address: { line1: '1 Test Street', city: 'Austin', state: 'TX', postalCode: '78701', country: 'US' },
-    grantScopes: GRANT_SCOPES.filter(scope => identity.can(scope)),
+    grantScopes: FLOW_SCOPES.filter(scope => identity.can(scope)),
   });
   const businessId = created.business._id;
   saveState({ businessId });
@@ -94,7 +101,7 @@ async function ensureBusiness(identity: PlatformIdentity): Promise<string> {
 
 /** Informational only: a business that isn't fully ready can still create test invoices. */
 async function checkReadiness(businessClient: OncadeClient) {
-  step(3, 'Readiness (GET /v1/platform/business/readiness)');
+  step('Readiness (GET /v1/platform/business/readiness)');
   try {
     const readiness = await businessClient.getReadiness();
     ok(`ready=${readiness.ready}`, readiness.steps);
@@ -110,8 +117,27 @@ async function checkReadiness(businessClient: OncadeClient) {
  * status-only check.
  */
 async function isReceiverUp(): Promise<boolean> {
-  return fetch(`http://localhost:${config.webhookPort}/health`)
+  return fetch(`http://localhost:${config.webhookPort}${HEALTH_PATH}`)
     .then(async response => response.ok && (await response.text()) === RECEIVER_ID, () => false);
+}
+
+/** A $60 two-line invoice to the configured receiver, due in INVOICE_DUE_IN_DAYS, tagged with a run id. */
+function sampleInvoiceDraft(): InvoiceDraft {
+  const today = new Date();
+  return {
+    receiverName: 'PoC Customer',
+    receiverEmail: config.invoiceReceiverEmail,
+    date: today.toISOString(),
+    dueDate: new Date(today.getTime() + INVOICE_DUE_IN_DAYS * DAY_MS).toISOString(),
+    payToTarget: 'BUSINESS',
+    items: [
+      { description: 'Integration consulting (hours)', quantity: 2, rate: 25, amount: 50 },
+      { description: 'Webhook setup', quantity: 1, rate: 10, amount: 10 },
+    ],
+    total: 60,
+    note: 'Created by oncade-platform-poc',
+    externalMetadata: { source: 'oncade-platform-poc', runId: randomUUID() },
+  };
 }
 
 function httpStatusOf(err: unknown): number | undefined {
@@ -129,36 +155,22 @@ async function main() {
   if (!receiverUp) warn('webhook receiver not running (npm run webhooks) - confirming via API only');
   const lifecycle = new InvoiceLifecycle(businessClient, { events: receiverUp ? new FileInbox({ file: EVENTS_FILE }) : undefined });
 
-  step(4, 'issue() - draft invoice');
-  const today = new Date();
-  const issued = await lifecycle.issue({
-    receiverName: 'PoC Customer',
-    receiverEmail: config.invoiceReceiverEmail,
-    date: today.toISOString(),
-    dueDate: new Date(today.getTime() + 30 * DAY_MS).toISOString(),
-    payToTarget: 'BUSINESS',
-    items: [
-      { description: 'Integration consulting (hours)', quantity: 2, rate: 25, amount: 50 },
-      { description: 'Webhook setup', quantity: 1, rate: 10, amount: 10 },
-    ],
-    total: 60,
-    note: 'Created by oncade-platform-poc',
-    externalMetadata: { source: 'oncade-platform-poc', runId: randomUUID() },
-  });
+  step('issue() - draft invoice');
+  const issued = await lifecycle.issue(sampleInvoiceDraft());
   const invoiceId = issued.invoice._id;
   ok(`invoice ${issued.invoice.invoiceNumber}`, { paymentSummary: issued.invoice.paymentSummary, link: issued.invoice.links?.invoice });
-  report(issued, 'Platform.Invoice.Created');
+  report(issued, INVOICE_EVENTS.created);
 
-  step(5, `send() - sendEmail=${config.sendInvoiceEmail}`);
-  report(await lifecycle.send(invoiceId, { sendEmail: config.sendInvoiceEmail }), 'Platform.Invoice.Sent');
+  step(`send() - sendEmail=${config.sendInvoiceEmail}`);
+  report(await lifecycle.send(invoiceId, { sendEmail: config.sendInvoiceEmail }), INVOICE_EVENTS.sent);
 
   if (KEEP_INVOICE) {
-    console.log(`\n--keep: leaving invoice "sent". Pay it at ${issued.invoice.links?.invoice ?? '(no link)'} and watch for Platform.Invoice.Paid in the webhook terminal.`);
+    console.log(`\n--keep: leaving invoice "sent". Pay it at ${issued.invoice.links?.invoice ?? '(no link)'} and watch for ${INVOICE_EVENTS.paid} in the webhook terminal.`);
     return;
   }
 
-  step(6, 'cancel()');
-  report(await lifecycle.cancel(invoiceId), 'Platform.Invoice.Cancelled');
+  step('cancel()');
+  report(await lifecycle.cancel(invoiceId), INVOICE_EVENTS.cancelled);
 
   console.log('\nDone: draft -> sent -> cancelled, each confirmed by the API.');
 }

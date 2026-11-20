@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { EVENTS_FILE, RECEIVER_ID, WEBHOOK_PATH, loadConfig } from './config.ts';
+import { EVENTS_FILE, HEALTH_PATH, RECEIVER_ID, WEBHOOK_PATH, loadConfig } from './config.ts';
+import { INVOICE_EVENTS } from './invoice-lifecycle.ts';
 import { FileInbox } from './webhook-inbox.ts';
 import { createWebhookHandler } from './webhooks.ts';
 import type { WebhookEvent } from './types.ts';
@@ -10,13 +11,13 @@ const config = loadConfig({ webhooks: true });
 function reactTo(event: WebhookEvent) {
   const data = event.data ?? {};
   switch (event.event) {
-    case 'Platform.Invoice.Created':
-    case 'Platform.Invoice.Updated':
-    case 'Platform.Invoice.Sent':
-    case 'Platform.Invoice.Cancelled':
+    case INVOICE_EVENTS.created:
+    case INVOICE_EVENTS.updated:
+    case INVOICE_EVENTS.sent:
+    case INVOICE_EVENTS.cancelled:
       console.log(`  invoice event ${event.event}`, data);
       break;
-    case 'Platform.Invoice.Paid':
+    case INVOICE_EVENTS.paid:
       // Where a real integration would mark the order paid / release goods (idempotently!).
       console.log('  💰 invoice paid', data);
       break;
@@ -44,7 +45,7 @@ const handleWebhook = createWebhookHandler({
 
 createServer((req, res) => {
   const path = req.url?.split('?')[0];
-  if (path === '/health') return void res.writeHead(200).end(RECEIVER_ID);
+  if (path === HEALTH_PATH) return void res.writeHead(200).end(RECEIVER_ID);
   if (path === WEBHOOK_PATH) return void handleWebhook(req, res);
   res.writeHead(404).end();
 }).listen(config.webhookPort, () => {

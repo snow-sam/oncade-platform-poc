@@ -17,6 +17,7 @@ const invoiceFor = (amount: number): CreateInvoiceInput => ({
   externalMetadata: { source: 'idempotency-check' },
 });
 
+const LABEL_WIDTH = 28; // longest label below, so results line up
 const idempotencyKey = randomUUID();
 const createdIds = new Set<string>();
 
@@ -24,9 +25,9 @@ async function createWithSameKey(label: string, input: CreateInvoiceInput) {
   try {
     const invoice = await businessClient.createInvoice(input, idempotencyKey);
     createdIds.add(invoice._id);
-    console.log(`${label.padEnd(28)} -> ${invoice._id} total=${invoice.total}`);
+    console.log(`${label.padEnd(LABEL_WIDTH)} -> ${invoice._id} total=${invoice.total}`);
   } catch (err) {
-    console.log(`${label.padEnd(28)} -> ${err instanceof OncadeApiError ? `HTTP ${err.status} ${JSON.stringify(err.body)}` : err}`);
+    console.log(`${label.padEnd(LABEL_WIDTH)} -> ${err instanceof OncadeApiError ? `HTTP ${err.status} ${JSON.stringify(err.body)}` : err}`);
   }
 }
 

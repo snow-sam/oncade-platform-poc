@@ -9,5 +9,5 @@ import type { WebhookEvent } from './types.ts';
  * Implemented by the Webhook inbox adapters (src/webhook-inbox.ts): FileInbox and InMemoryInbox.
  */
 export interface EventSource {
-  waitFor(match: (e: WebhookEvent) => boolean, opts: { since: Date; timeoutMs: number }): Promise<WebhookEvent | undefined>;
+  waitFor(match: (event: WebhookEvent) => boolean, bounds: { since: Date; timeoutMs: number }): Promise<WebhookEvent | undefined>;
 }

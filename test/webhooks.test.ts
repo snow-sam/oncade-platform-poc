@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { createWebhookHandler, computeSignature, verifySignature } from '../src/webhooks.ts';
+import { SIGNATURE_HEADER, computeSignature, createWebhookHandler, verifySignature } from '../src/webhooks.ts';
 import { InMemoryInbox } from '../src/webhook-inbox.ts';
 import type { WebhookEvent } from '../src/types.ts';
 
@@ -61,7 +61,7 @@ describe('webhook handler', () => {
   after(() => server.close());
 
   const post = (body: string, sig?: string) =>
-    fetch(url, { method: 'POST', body, headers: sig ? { 'x-oncade-signature': sig } : {} });
+    fetch(url, { method: 'POST', body, headers: sig ? { [SIGNATURE_HEADER]: sig } : {} });
   const signed = (body: string) => post(body, computeSignature(body, SECRET));
 
   it('stores a signed event, answers 200, then runs the reaction', async () => {

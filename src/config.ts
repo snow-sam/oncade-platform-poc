@@ -9,7 +9,9 @@ export const STATE_FILE = resolve(DATA_DIR, 'state.json');
 
 /** Path the receiver serves webhooks on. The full URL goes in dev.oncade.xyz → Platform → Settings. */
 export const WEBHOOK_PATH = '/webhooks/oncade';
-/** Body of the receiver's /health. The flow checks it, so another app on the same port isn't mistaken for it. */
+/** Path of the receiver's liveness check; it answers with RECEIVER_ID. */
+export const HEALTH_PATH = '/health';
+/** Body of the receiver's HEALTH_PATH. The flow checks it, so another app on the same port isn't mistaken for it. */
 export const RECEIVER_ID = 'oncade-platform-poc/webhooks';
 
 export interface Config {

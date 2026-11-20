@@ -43,18 +43,28 @@ interface ConfirmOptions {
   webhookTimeoutMs?: number;
 }
 
-/** What confirming one transition means: the operation's name, the state the API must report, the webhook to expect. */
+/** Oncade's invoice webhook event names. The single source for this module, the flow and the receiver. */
+export const INVOICE_EVENTS = {
+  created: 'Platform.Invoice.Created',
+  updated: 'Platform.Invoice.Updated',
+  sent: 'Platform.Invoice.Sent',
+  paid: 'Platform.Invoice.Paid',
+  cancelled: 'Platform.Invoice.Cancelled',
+} as const;
+
+/** What confirming one transition means: the state the API must report, and the webhook to expect. */
 interface Transition {
-  operation: string;
   expectedStatus: InvoiceStatus;
   webhookEvent: string;
 }
 
 const TRANSITIONS = {
-  issue: { operation: 'issue', expectedStatus: 'draft', webhookEvent: 'Platform.Invoice.Created' },
-  send: { operation: 'send', expectedStatus: 'sent', webhookEvent: 'Platform.Invoice.Sent' },
-  cancel: { operation: 'cancel', expectedStatus: 'cancelled', webhookEvent: 'Platform.Invoice.Cancelled' },
+  issue: { expectedStatus: 'draft', webhookEvent: INVOICE_EVENTS.created },
+  send: { expectedStatus: 'sent', webhookEvent: INVOICE_EVENTS.sent },
+  cancel: { expectedStatus: 'cancelled', webhookEvent: INVOICE_EVENTS.cancelled },
 } satisfies Record<string, Transition>;
+
+type Operation = keyof typeof TRANSITIONS;
 
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 60_000;
 
@@ -79,22 +89,22 @@ export class InvoiceLifecycle {
   issue(draft: InvoiceDraft, options: ConfirmOptions = {}): Promise<Confirmation> {
     // Drop any status the caller passed anyway: issuing always produces a draft.
     const { status: _ignored, ...fields } = draft as CreateInvoiceInput;
-    return this.confirm(TRANSITIONS.issue, options,
+    return this.confirm('issue', options,
       () => this.api.createInvoice({ ...fields, status: 'draft' }, randomUUID()));
   }
 
   send(invoiceId: string, options: ConfirmOptions & { sendEmail?: boolean } = {}): Promise<Confirmation> {
-    return this.confirm(TRANSITIONS.send, options,
+    return this.confirm('send', options,
       () => this.api.sendInvoice(invoiceId, { sendEmail: options.sendEmail ?? false }));
   }
 
   cancel(invoiceId: string, options: ConfirmOptions = {}): Promise<Confirmation> {
-    return this.confirm(TRANSITIONS.cancel, options, () => this.api.cancelInvoice(invoiceId));
+    return this.confirm('cancel', options, () => this.api.cancelInvoice(invoiceId));
   }
 
   /** Performs the action, reads the invoice back, checks its state, then waits for the matching webhook. */
-  private async confirm(transition: Transition, options: ConfirmOptions, performAction: () => Promise<Invoice>): Promise<Confirmation> {
-    const { operation, expectedStatus, webhookEvent } = transition;
+  private async confirm(operation: Operation, options: ConfirmOptions, performAction: () => Promise<Invoice>): Promise<Confirmation> {
+    const { expectedStatus, webhookEvent }: Transition = TRANSITIONS[operation];
     // Captured before the HTTP call: a delivery can land before the response does.
     const since = new Date();
 
