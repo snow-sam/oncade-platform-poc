@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { createWebhookHandler, sign, verifySignature } from '../src/webhooks.ts';
+import { createWebhookHandler, computeSignature, verifySignature } from '../src/webhooks.ts';
 import { InMemoryInbox } from '../src/webhook-inbox.ts';
 import type { WebhookEvent } from '../src/types.ts';
 
@@ -11,14 +11,14 @@ const SECRET = 'whsec_test_123';
 describe('verifySignature', () => {
   const body = Buffer.from('{"event":"Platform.Invoice.Sent","data":{"invoiceId":"inv_1"}}');
 
-  it('accepts a correct signature', () => assert.ok(verifySignature(body, sign(body, SECRET), SECRET)));
-  it('accepts uppercase hex', () => assert.ok(verifySignature(body, sign(body, SECRET).toUpperCase(), SECRET)));
-  it('rejects wrong secret', () => assert.ok(!verifySignature(body, sign(body, 'other'), SECRET)));
+  it('accepts a correct signature', () => assert.ok(verifySignature(body, computeSignature(body, SECRET), SECRET)));
+  it('accepts uppercase hex', () => assert.ok(verifySignature(body, computeSignature(body, SECRET).toUpperCase(), SECRET)));
+  it('rejects wrong secret', () => assert.ok(!verifySignature(body, computeSignature(body, 'other'), SECRET)));
   it('rejects missing signature', () => assert.ok(!verifySignature(body, undefined, SECRET)));
-  it('rejects truncated signature', () => assert.ok(!verifySignature(body, sign(body, SECRET).slice(0, 10), SECRET)));
+  it('rejects truncated signature', () => assert.ok(!verifySignature(body, computeSignature(body, SECRET).slice(0, 10), SECRET)));
   it('rejects re-serialised body (whitespace change)', () => {
     const reformatted = Buffer.from(JSON.stringify(JSON.parse(body.toString()), null, 2));
-    assert.ok(!verifySignature(reformatted, sign(body, SECRET), SECRET));
+    assert.ok(!verifySignature(reformatted, computeSignature(body, SECRET), SECRET));
   });
 });
 
@@ -62,7 +62,7 @@ describe('webhook handler', () => {
 
   const post = (body: string, sig?: string) =>
     fetch(url, { method: 'POST', body, headers: sig ? { 'x-oncade-signature': sig } : {} });
-  const signed = (body: string) => post(body, sign(body, SECRET));
+  const signed = (body: string) => post(body, computeSignature(body, SECRET));
 
   it('stores a signed event, answers 200, then runs the reaction', async () => {
     const body = JSON.stringify({ event: 'Platform.Invoice.Created', data: { invoiceId: 'a' }, timestamp: 't' });

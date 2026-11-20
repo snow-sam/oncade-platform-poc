@@ -38,7 +38,7 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 | `CLAUDE.md` | The context file the AI agent worked from: API facts, verified deviations from the docs, guardrails, and agent skills config |
 | `docs/agents/` | Agent skill configuration: issue tracker (GitHub), triage labels, domain-docs layout |
 
-Safety: `config.ts` refuses any key that isn't `oncade_platform_test_…`.
+Safety: the `OncadeClient` constructor refuses any key that isn't `oncade_platform_test_…`, and `getPlatformIdentity()` refuses a key that reports a live environment.
 
 ## Run it
 

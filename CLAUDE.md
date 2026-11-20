@@ -31,7 +31,7 @@ When the guide and the reference disagree, trust **actual API responses**, then 
 - Invoice webhooks carry `data.invoiceId`, `status`, `total`, etc., but not `externalMetadata`.
 
 ## Rules
-- Never run against a live key. `src/config.ts` refuses keys without the `oncade_platform_test_` prefix - keep it.
+- Never run against a live key. The `OncadeClient` constructor (`src/client.ts`) refuses keys without the `oncade_platform_test_` prefix - keep it.
 - Never commit `.env` or print the API key / webhook secret. The client redacts the key in debug logs.
 - Keep zero runtime dependencies (Node ≥ 20.6 built-ins: fetch, http, crypto, `--env-file`).
 - `npm run typecheck && npm test` must pass before committing.
