@@ -219,15 +219,22 @@ idempotency. That probe found the most serious bug (FEEDBACK #10), which the doc
 
 ### Live run notes (test environment, 2026-11-19)
 
+Latest run, after all four passes (`npm run flow`, receiver up, the business from the first run reused):
+
 ```
-[1] GET /me              ✓ env=test, platform status "pending", 17 effective scopes
-[2] POST /business       ✓ grant active with 7 business/invoice scopes
-[3] GET /readiness       ✓ ready=true (payoutWallet, address, kybVerification all "complete")
-[4] POST /invoices       ✓ draft INV-2026-7217833, $60 + $0.30 payer fee   → webhook Platform.Invoice.Created ✓
-[5] POST /:id/send       ✓ sent, emailSuppressed=true                      → webhook Platform.Invoice.Sent ✓
-[6] GET /invoices/:id    ✓ status=sent, externalMetadata round-trips
-[7] POST /:id/cancel     ✓ cancelled                                       → webhook Platform.Invoice.Cancelled ✓
+[1] Platform identity    GET  /me                ✓ env=test, platform status "pending", 17 effective scopes
+[2] Business             (saved in .data)        ✓ reused; on the first run POST /business gave an active grant with 7 business/invoice scopes
+[3] Readiness            GET  /readiness         ✓ ready=true (payoutWallet, address, kybVerification all "complete")
+[4] issue()              POST /invoices + GET    ✓ draft INV-2026-6267960, $60 + $0.30 payer fee (0.5% service fee)  → Platform.Invoice.Created ✓
+[5] send()               POST /:id/send + GET    ✓ sent (sendEmail=false)                                            → Platform.Invoice.Sent ✓
+[6] cancel()             POST /:id/cancel + GET  ✓ cancelled                                                         → Platform.Invoice.Cancelled ✓
 ```
+
+Every transition is confirmed by reading the invoice back from the API. All three webhooks arrived signed, were stored
+once each in `.data/events.jsonl` (about 1s apart), and were matched by `invoiceId`. `externalMetadata`
+(`source`, `runId`) round-trips on the invoice. This run used the refactored code, including
+`getPlatformIdentity()`, the shared `RECEIVER_ID`/`HEALTH_PATH` health check, `INVOICE_EVENTS` and `confirm()`.
+No changes were needed.
 
 `npm run idempotency:check`: the same `Idempotency-Key` sent 3× created **3 invoices**, so the key isn't enforced (see FEEDBACK #10).
 `npm run webhook:selftest`: valid → 200, replay → 200 duplicate, wrong secret → 401, unsigned → 401.
