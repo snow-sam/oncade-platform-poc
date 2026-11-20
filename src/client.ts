@@ -33,6 +33,8 @@ interface RequestOptions {
 }
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH']);
+// The API returns 400 for non-UUID Idempotency-Keys (not documented). Fail fast client-side instead.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Minimal typed client for the Oncade Platform API (v1). */
 export class OncadeClient {
@@ -48,6 +50,9 @@ export class OncadeClient {
   }
 
   async request<T>(method: string, path: string, { body, query, idempotencyKey }: RequestOptions = {}): Promise<T> {
+    if (idempotencyKey !== undefined && !UUID_RE.test(idempotencyKey)) {
+      throw new TypeError(`Idempotency-Key must be a UUID (Oncade rejects other formats), got "${idempotencyKey}"`);
+    }
     const url = new URL(this.opts.baseUrl + path);
     for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
 

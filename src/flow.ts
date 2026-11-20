@@ -64,8 +64,12 @@ async function expectWebhook(name: string, invoiceId: string, since: Date, fallb
 async function main() {
   step(1, 'Verify API key (GET /v1/platform/me)');
   const me = await platform.me();
-  const active = me.activeScopes ?? [];
-  ok(`platform ${me.platformId} env=${me.keyInfo?.environment}`, { activeScopes: active, pendingScopes: me.pendingScopes });
+  // Effective permission = platform-approved ∩ key scopes (∩ business grant, applied server-side).
+  const keyScopes = me.keyInfo?.activeScopes ?? me.activeScopes ?? [];
+  const active = me.approvedScopes ? keyScopes.filter(s => me.approvedScopes!.includes(s)) : keyScopes;
+  ok(`platform ${me.platformId} (${me.status}) env=${me.keyInfo?.environment}`, { effectiveScopes: active, pendingScopes: me.pendingScopes });
+  const unapproved = keyScopes.filter(s => !active.includes(s));
+  if (unapproved.length) warn(`key has scopes the platform hasn't approved: ${unapproved.join(', ')}`);
   if (me.keyInfo?.environment && me.keyInfo.environment !== 'test') throw new Error('Not a test key');
   const missing = WANTED_SCOPES.filter(s => !active.includes(s));
   if (missing.length) warn(`key lacks scopes: ${missing.join(', ')} - some steps may 403`);
@@ -117,7 +121,7 @@ async function main() {
     note: 'Created by oncade-platform-poc',
     externalMetadata: { source: 'oncade-platform-poc', runId },
     status: 'draft',
-  }, `invoice-${runId}`);
+  }, runId); // API rejects non-UUID Idempotency-Keys (undocumented)
   ok(`invoice ${invoice._id} status=${invoice.status}`, {
     invoiceNumber: invoice.invoiceNumber, paymentSummary: invoice.paymentSummary, link: invoice.links?.invoice,
   });

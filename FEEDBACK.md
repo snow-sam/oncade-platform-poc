@@ -50,6 +50,51 @@ Each item: where, what I did, what I expected, what happened. Tags: **broken**, 
 - The gift flow depends on an unnamed "contract-sdk".
 - The invoice example shows `payerFee: 25` on a $50 invoice with no fees, but the Oncade fee rate isn't documented.
 
-## Integration run (test environment)
+## Integration run (test environment, 2026-11-19)
 
-_Filled in from the live run. See README → "How AI was used"._
+Result: the full invoice lifecycle **works end to end**: business create → readiness → draft → send → cancel. All three
+invoice webhooks arrived signed, and HMAC verification passed on the first try. The issues below came from the live run.
+
+### 10. [Broken] `Idempotency-Key` is required but not enforced, so retries create duplicate invoices
+- **Where:** `POST /v1/platform/invoices` (reproduce with `npm run idempotency:check`)
+- **What I did:** Sent the same UUID `Idempotency-Key` three times: twice with the same body, once with a different body.
+- **Expected:** The 2nd call returns the original invoice. The 3rd call gets a 409/422 for key reuse with a different payload.
+- **What happened:** All three calls returned 201, and **three different invoices** were created (`…5c7e`, `…5c8c`, `…5c9a`).
+  Getting-started tells integrators to send the header on every POST/PUT/PATCH, so they'll rely on it. A client that
+  retries after a timeout will double-bill the payer.
+
+### 11. [Confusing] `Idempotency-Key` must be a UUID, which isn't documented
+- **Where:** `POST /v1/platform/invoices`
+- **What I did:** Sent `Idempotency-Key: invoice-<uuid>`, a common prefixed-key pattern.
+- **What happened:** `400 {"error":"Invalid Idempotency-Key format. Expected UUID format."}`. The format rule is fine, but it
+  should be in the docs. The error message itself is clear.
+
+### 12. [Confusing] `GET /v1/platform/me` response doesn't match the documented shape
+- **Where:** `GET /v1/platform/me`
+- **Expected (docs):** Top-level `activeScopes` and `pendingScopes`.
+- **What happened:** The scopes come back under `keyInfo.activeScopes`, and there's an undocumented top-level `approvedScopes`.
+  Code written from the docs reads `activeScopes` as empty. Mine did, and would have sent an empty `grantScopes` when
+  creating the business.
+
+### 13. [Confusing] Test key holds about 45 scopes the platform hasn't approved
+- **Where:** dev.oncade.xyz → API key creation, then `GET /v1/platform/me`
+- **What happened:** The key's `activeScopes` include campaign, distribution, gift, vc, item and similar scopes, but `approvedScopes`
+  only has platform, business and invoice scopes. The docs say business scopes are auto-approved in test, and `pendingScopes` is
+  `[]`, so nothing tells you how to get the rest approved or why they weren't. The platform's own `status` is `"pending"`, and that
+  isn't explained either.
+- **Related:** My first key didn't include `platform:read`, so even `GET /me` returned 403. The error message was clear
+  (`API key does not have required scope: platform:read`), but `/me` is the first call every guide makes. Making that scope
+  default or required on key creation would remove this first stumble.
+
+### 14. [Confusing] Invoice webhook payloads differ from the docs (in a good way)
+- **Where:** `Platform.Invoice.Created`, `.Sent` and `.Cancelled` deliveries
+- **Docs say:** Invoice events "carry no custom data; match via externalMetadata then GET the invoice".
+- **What happened:** `data` includes `invoiceId`, `invoiceNumber`, `businessId`, `receiverName`, `receiverEmail`, `total`, `currency`,
+  `status`, `environment` and `publicInvoiceId`. That's useful, but it doesn't include `externalMetadata`, which is the field the docs tell you to match on.
+  Please document the real payload.
+
+### 15. [Confusing] Fees and hosted links
+- `payerFee` was `0.3` on a `$60` invoice (0.5%). The rate isn't documented anywhere.
+- Hosted links (`links.invoice`, `home`, `kyb`, `signIn`) point to `pay.oncade.xyz`, but the docs show `pay.oncade.gg`.
+- In test, readiness reports `kybVerification: "complete"` right away for a new business. That's convenient, but it isn't
+  documented, so integrators can't tell whether test mode skips KYB or whether it ran.

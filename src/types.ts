@@ -3,7 +3,12 @@
 
 export interface MeResponse {
   platformId?: string;
-  keyInfo?: { environment?: 'test' | 'live'; [k: string]: unknown };
+  name?: string;
+  status?: string;
+  /** Scopes approved for the platform (not in the docs' example, but returned by the API). */
+  approvedScopes?: string[];
+  /** Docs show activeScopes at the top level; the API actually returns it under keyInfo. */
+  keyInfo?: { keyId?: string; environment?: 'test' | 'live'; activeScopes?: string[]; [k: string]: unknown };
   activeScopes?: string[];
   pendingScopes?: string[];
   [k: string]: unknown;

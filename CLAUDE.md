@@ -23,6 +23,11 @@ When the guide and the reference disagree, trust **actual API responses**, then 
 - Webhooks: `x-oncade-signature` = hex HMAC-SHA256 of the **raw body** with the platform webhook secret. Never verify a
   re-serialised body. No event id is documented, so we dedupe on a SHA-256 of the raw body.
 
+## Verified against the live test API (overrides the docs)
+- `GET /me`: scopes are in `keyInfo.activeScopes`, plus a top-level `approvedScopes`. Effective = intersection.
+- `Idempotency-Key` must be a UUID (400 otherwise), and it is **not enforced**: the same key creates duplicates. Don't rely on it for safety.
+- Invoice webhooks carry `data.invoiceId`, `status`, `total`, etc., but not `externalMetadata`.
+
 ## Rules
 - Never run against a live key. `src/config.ts` refuses keys without the `oncade_platform_test_` prefix - keep it.
 - Never commit `.env` or print the API key / webhook secret. The client redacts the key in debug logs.

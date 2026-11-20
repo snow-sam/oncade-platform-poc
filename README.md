@@ -24,6 +24,8 @@ It has no runtime dependencies (only Node built-ins: `fetch`, `http`, `crypto`).
 | `src/webhooks.ts` | HMAC-SHA256 verification over the **raw body** with a constant-time compare; http handler (401 bad sig, 400 bad JSON, 200 on duplicate, 500 on handler error so Oncade retries) |
 | `src/server.ts` | Webhook receiver on `:3001/webhooks/oncade` (`WEBHOOK_PORT`), writes events to `.data/events.jsonl` |
 | `src/flow.ts` | The end-to-end run above. It waits for each webhook and falls back to polling the API if the receiver isn't running |
+| `src/idempotency-check.ts` | Sends the same `Idempotency-Key` three times to see whether the API dedupes. Found FEEDBACK #10 |
+| `src/tunnel.ts` | Starts a `cloudflared` quick tunnel on `WEBHOOK_PORT` and prints the URL to paste in the portal |
 | `src/selftest.ts` | Sends valid, replayed, wrong-secret and unsigned deliveries to the local receiver |
 | `test/` | `node:test` suites for signature verification, the handler and the client headers |
 | `FEEDBACK.md` | Part 2 feedback: doc bugs and confusion found while building |
@@ -76,10 +78,38 @@ Set `ONCADE_DEBUG=true` to log every request and response.
 - Writing up feedback in a consistent format.
 
 **Where it got things wrong / needed correction**
-- _Updated after the live run (see below)._
-- It couldn't render the Part 1 Word doc to check the layout, because LibreOffice wasn't installed.
-  It said so instead of claiming the layout was fine.
-- Inline `python -c` through Git Bash on Windows broke on quoting, so it switched to a script file.
 
-### Live run notes
-_Pending: results of `npm run flow` against the test environment._
+Most of the AI's mistakes came from trusting the docs. The live run caught each of them:
+- **`/me` shape.** It read `activeScopes` from the top level, as documented. The API returns it under `keyInfo`, so the
+  business would have been created with an empty `grantScopes`. Fixed to use `keyInfo.activeScopes ∩ approvedScopes`.
+- **Idempotency key format.** It generated `invoice-<uuid>` keys, which the API rejects (400, UUID only). Fixed, and
+  the client now validates before sending.
+- **Over-defensive webhook matching.** The docs say invoice events carry no data, so it wrote a deep search for the
+  invoice id anywhere in the payload. The real payload has a plain `invoiceId`. Harmless, but more complicated than needed.
+- **Port 3000 default** clashed with another local app. Moved to 3001 and made the tunnel follow `WEBHOOK_PORT`.
+- **What it got right:** HMAC verification over the raw body worked on the first live delivery.
+
+Tooling friction: Claude Code's auto-mode guardrail blocked the agent from creating a *public* GitHub repo on my account.
+I ran that one command myself, which is a reasonable default. Two environment issues on Windows: it couldn't render the Part 1
+Word doc (no LibreOffice), and it said so instead of claiming the layout was fine. Inline `python -c` broke on Git Bash quoting.
+
+**Where the human mattered:** choosing the flow, creating keys, scopes and the webhook URL in the portal, and deciding to probe
+idempotency. That probe found the most serious bug (FEEDBACK #10), which the docs would never have revealed.
+
+### Live run notes (test environment, 2026-11-19)
+
+```
+[1] GET /me              ✓ env=test, platform status "pending", 17 effective scopes
+[2] POST /business       ✓ grant active with 7 business/invoice scopes
+[3] GET /readiness       ✓ ready=true (payoutWallet, address, kybVerification all "complete")
+[4] POST /invoices       ✓ draft INV-2026-7217833, $60 + $0.30 payer fee   → webhook Platform.Invoice.Created ✓
+[5] POST /:id/send       ✓ sent, emailSuppressed=true                      → webhook Platform.Invoice.Sent ✓
+[6] GET /invoices/:id    ✓ status=sent, externalMetadata round-trips
+[7] POST /:id/cancel     ✓ cancelled                                       → webhook Platform.Invoice.Cancelled ✓
+```
+
+`npm run idempotency:check`: the same `Idempotency-Key` sent 3× created **3 invoices**, so the key isn't enforced (see FEEDBACK #10).
+`npm run webhook:selftest`: valid → 200, replay → 200 duplicate, wrong secret → 401, unsigned → 401.
+
+Not covered: `Platform.Invoice.Paid`. Paying needs ACH on the hosted page. `npm run flow -- --keep` leaves an invoice in
+`sent` and prints the pay link if you want to try it.

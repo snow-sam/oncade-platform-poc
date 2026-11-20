@@ -11,6 +11,7 @@
     "webhooks": "tsx --env-file=.env src/server.ts",
     "flow": "tsx --env-file=.env src/flow.ts",
     "whoami": "tsx --env-file=.env src/whoami.ts",
+    "idempotency:check": "tsx --env-file=.env src/idempotency-check.ts",
     "webhook:selftest": "tsx --env-file=.env src/selftest.ts",
     "tunnel": "tsx --env-file=.env src/tunnel.ts",
     "test": "node --import tsx --test test/*.test.ts",
