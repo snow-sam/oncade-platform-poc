@@ -100,7 +100,10 @@ invoice webhooks arrived signed, and HMAC verification passed on the first try. 
   Please document the real payload.
 
 ### 15. [Confusing] Fees and hosted links
-- `payerFee` was `0.3` on a `$60` invoice (0.5%). The rate isn't documented anywhere.
+- `payerFee` was `0.3` on a `$60` invoice (0.5%). The rate isn't documented anywhere. The API does return it:
+  `GET /v1/platform/invoices/:id` includes `paymentSummary.fees: [{ label: "Service Fee", percentageRate: 0.5, flatRateCents: 0, amountCents: 30, source: "oncade" }]`.
+  So only the docs are missing. Documenting `paymentSummary.fees` and the current rate would let integrators show the
+  payer's total before creating an invoice.
 - Hosted links (`links.invoice`, `home`, `kyb`, `signIn`) point to `pay.oncade.xyz`, but the docs show `pay.oncade.gg`.
 - In test, readiness reports `kybVerification: "complete"` right away for a new business. That's convenient, but it isn't
   documented, so integrators can't tell whether test mode skips KYB or whether it ran.
